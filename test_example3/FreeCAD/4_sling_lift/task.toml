@@ -19,14 +19,14 @@ max_score = 6
 output_modality = "cad"
 accepted_output_formats = ["fcstd", "freecad-py", "fcmacro"]
 reference = ["solution/solution.FCStd"]
-notes = "ground truth is reference/solution.FCStd (hardcoded); FREECAD_CMD must point at freecadcmd 1.1 (the GT is authored in 1.1).\n\nAUDIT 2026-08-31: solution 6/6 PASS; ladder solution 6 > half_finished 5 = joint_limits_swapped 5 > mirrored 4 > one_link_missing 3 > decorative_dims 2.5 > dummy_joints 2 > double_scale 0.5 > build-fail 0/6 (gated, all subscores emitted). NEEDS-REVIEW checks (signature dimensions) score 0.5 in the envelope. Two proving adversaries the corpus regeneration had dropped were restored from Other Stuff/make_examples.py: double_scale proves the scale gate (every shape metric passes at 2x; only the ratio gate convicts) and decorative_dims proves the dims-drive probe (25 decoy constraints pass the count; volume-changed probes convict). Their FCStd binaries are uploaded to the assets container and pinned below (2026-08-31, az storage blob upload; round-trip checksum-verified).\n\nKnown attribution nuance: joint_limits_swapped is convicted by geometry at the delivered pose, not by the articulation probe (+/-5 degree drives cannot see swapped limits). A candidate with swapped limits but a correct delivered pose would pass -- joint-limit ranges are effectively ungraded, defensible since the brief asks only that joints stay mated and the mechanism articulates.\n\n\n2026-09-02 refactor merge: six adversaries resurfaced as STL-only pins (broken_mates, dead_geometry, no_joints, partial_weld, rigid, wrong_geometry). Their FCStd sources were recovered from git history (pre-blob commit 1e2a118) and re-pinned beside the STLs; each fails exactly its named defect (see labels). The pinned STLs predate these docs' current exports and tessellate differently; the FCStd is the graded artifact. The double_scale and decorative_dims FCStds were also re-uploaded under the folder-pin layout (the resync had dropped the old flat blobs; round-trip checksum-verified)."
+notes = "Deterministic FreeCAD 1.1 headless grader; no LLM. Six equally weighted checks: completeness, geometry/dimensions, mates, articulation/limits, dimensional-control coverage, and actual geometry response to parameter edits. A valid global mirror is accepted. The frozen reference is tests/task/reference/solution.FCStd. Two ISO 8752 6x16 pins from the drawing are allowed even though the reference omits them. See tests/task/harness/NOTES.md for measurements, tolerances, validation and supported modeling scope."
 
 [metadata.harness]
 entrypoint = "harness/harness.py"
 timeout_s = 600.0
 requires_solidworks = false
 requires_freecad = true
-requires_llm = true
+requires_llm = false
 
 [[metadata.inputs]]
 path = "environment/input.pdf"

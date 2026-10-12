@@ -1,6 +1,6 @@
 # Shared base image for all FreeCAD Harbor tasks.
 # Build once from the repo root:
-#   docker build -f common/docker/freecad-base.Dockerfile -t freecad-base:latest .
+#   docker build -f docker/freecad-base.Dockerfile -t freecad-base:latest .
 # Each task's environment/Dockerfile then does `FROM freecad-base:latest`.
 #
 # FreeCAD ships no official Docker image, so this installs the real 1.1.3
@@ -33,11 +33,5 @@ ENV FREECAD_CMD=/usr/local/bin/freecadcmd
 
 COPY env_requirements.txt /tmp/env_requirements.txt
 RUN pip install --no-cache-dir -r /tmp/env_requirements.txt
-
-# Shared grading library (common/geom.py, common/harness_base.py, ...).
-# Most harnesses do `from common import harness_base`; a few do
-# `from harness_base import finalize` directly -- PYTHONPATH covers both.
-COPY common /opt/common
-ENV PYTHONPATH=/opt:/opt/common
 
 WORKDIR /app

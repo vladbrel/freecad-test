@@ -1,158 +1,467 @@
 #!/usr/bin/env python3
-"""Grading harness for 4_sling_lift -- A STUB. Writing it is the exercise.
+"""Deterministic lift grader. FreeCAD runs only in the measurement subprocess.
 
-    python3 tests/task/harness/harness.py solution/solution.FCStd
+Usage:
+    python harness.py solution.FCStd
+    python harness.py --corpus
 
-Runs as it stands: it measures the document and prints a valid score
-envelope in which every component scores zero and says why. That is the
-contract you are filling in, not a starting implementation -- there is no
-grading logic here to edit, and none was generated for you.
-
-WHAT IT HAS TO DO
-
-    the reference   solution/solution.FCStd must score 6 of 6.
-    the adversarials  every folder under examples/ must lose the
-                      component(s) it actually breaks, and only those.
-
-Grade the geometry and the parametric structure the instruction asks for.
-Do not grade object names, document-tree shape, or anything that is true
-of the reference by coincidence: a candidate who models the lift a
-different way and gets it right must still score 6 of 6. That is the
-whole difficulty of the task, and the corpus is built to catch a harness
-that takes the easy route.
-
-THE SPLIT, WHICH IS WORTH KEEPING
-
-This file does not import FreeCAD. It runs `measure_stage.py` under
-`freecadcmd` (the FREECAD_CMD environment variable), and scores the JSON
-that comes back. Two reasons, both practical: the scoring half
-stays testable on a machine with no FreeCAD, and a candidate's document
-never gets to run its own macros inside the grader's interpreter.
-
-`measure_stage.py` is a stub too. What it measures is your decision --
-that choice IS the design of the harness, so it was left to you.
-
-THE CONTRACT
-
-The stub is split into two functions:
-
-    build_state(candidate_path) -> dict
-        Expensive shared setup, run once. Whatever the checks read.
-
-    checks(state) -> {name: (name, score, description)}
-        `score` is a float in [0, 1]. `description` is the sentence a
-        human reads next to the number; make it say what was measured,
-        not just pass or fail.
-
-SCORE CONTINUOUSLY. A bool is accepted and is almost always the wrong
-answer. Most of these components are questions of degree, and collapsing
-them to pass/fail throws away the information that makes a grader useful:
-
-    five joints wanted, three mated                 -> 0.6, not 0
-    a link 4% short of the drawing                  -> 0.9, not 0
-    two of four signature dimensions present        -> 0.5, not 0
-
-A candidate who gets most of it right should score most of the marks, and
-two candidates who are wrong by different amounts should not land on the
-same number. Reserve a hard 0 or 1 for components that genuinely have no
-middle -- "does it rebuild without errors" is one, and it is the gate.
-
-`MUST_PASS` names components that zero the whole score when they fail.
-`ALL_CRITERIA` prices them; `max_score` in task.toml must equal the sum.
-
-The seven below are the components the task shipped with. They are a
-suggestion, not a requirement: split, merge, reweight, rename or replace
-them as your reading of instruction.md warrants, and say why in your
-notes. Keep task.toml's max_score in step.
+Install env_requirements.txt and set FREECAD_CMD (or put it in .env).
+The drawing supplies the requirements; the frozen reference supplies shape
+measurements. Object names are used only to join records, never as answers.
 """
+import argparse
+import itertools
 import json
+import math
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
+import numpy as np
+from scipy.optimize import linear_sum_assignment
+from scipy.spatial import cKDTree
+
 HERE = Path(__file__).resolve().parent
-
-#: Weight per component; 0 makes it a gate when it is also in MUST_PASS.
-#: The sum must equal task.toml's max_score (6 today).
-ALL_CRITERIA = {
-    "executes and builds geometry": 0,
-    "geometry matches ground truth": 1,
-    "pantograph joints mated": 1,
-    "mechanism articulates": 1,
-    "carries dimensional constraints": 1,
-    "dimensions drive the geometry": 1,
-    "signature dimensions present": 1,
-}
-MUST_PASS = ("executes and builds geometry",)
-MAX_SCORE = 6
+TASK = HERE.parents[2]
+REFERENCE = HERE.parent / 'reference' / 'solution.FCStd'
 TIMEOUT_S = 600
+SCHEMA_VERSION = 2
+ALL_CRITERIA = {
+    'executes and builds geometry': 0,
+    'assembly completeness': 1,
+    'geometry and dimensions': 1,
+    'pantograph joints mated': 1,
+    'mechanism articulates within its limits': 1,
+    'dimensional control coverage': 1,
+    'dimensions drive the geometry': 1,
+}
+MUST_PASS = ('executes and builds geometry',)
+MAX_SCORE = sum(ALL_CRITERIA.values())
 
-TODO = "not implemented -- see the docstring at the top of harness.py"
+
+class InfrastructureError(RuntimeError):
+    """A grader/setup error must not be presented as a CAD defect."""
 
 
-def run_stage(candidate_path):
-    """Run measure_stage.py under freecadcmd; return (measurement, error)."""
-    fc = os.environ.get("FREECAD_CMD")
-    if not fc:
-        return None, "FREECAD_CMD is not set (point it at a freecadcmd binary)"
+def clamp(value):
+    value = float(value)
+    if not math.isfinite(value):
+        raise ValueError('A score is not finite')
+    return max(0.0, min(1.0, value))
+
+
+def band(error, tolerance, zero_at):
+    """Full credit inside a tolerance, then a continuous fall to zero."""
+    return clamp(1.0 - max(0.0, float(error)-tolerance) / (zero_at-tolerance))
+
+
+def average(values, default=0.0):
+    values = list(values)
+    return sum(values)/len(values) if values else default
+
+
+def load_freecad_command():
+    if not os.environ.get('FREECAD_CMD'):
+        # Only read the setting we need; do not copy unrelated keys/secrets.
+        for folder in (TASK, TASK.parents[1], TASK.parents[2]):
+            env_file = folder / '.env'
+            if env_file.is_file():
+                for line in env_file.read_text(encoding='utf-8-sig').splitlines():
+                    key, separator, value = line.strip().removeprefix('export ').partition('=')
+                    if separator and key.strip() == 'FREECAD_CMD':
+                        os.environ['FREECAD_CMD'] = value.strip().strip('\"\'')
+    command = os.environ.get('FREECAD_CMD') or shutil.which('freecadcmd') or shutil.which('FreeCADCmd.exe')
+    if not command:
+        raise InfrastructureError('Set FREECAD_CMD to the FreeCAD 1.1 headless executable')
+    return command
+
+
+def run_stage(candidate_path, timeout=TIMEOUT_S):
+    """Return (measurement, candidate error); setup failures raise explicitly."""
+    command = load_freecad_command()
     if not candidate_path or not Path(candidate_path).is_file():
-        return None, f"no candidate file: {candidate_path}"
-    with tempfile.TemporaryDirectory() as out:
+        return None, 'No candidate FCStd file was found'
+    with tempfile.TemporaryDirectory(prefix='sling-measure-') as out:
         env = dict(os.environ, FC_STAGE_INPUT=str(Path(candidate_path).resolve()), FC_STAGE_OUT=out)
         try:
-            subprocess.run([fc, str(HERE / "measure_stage.py")], env=env,
-                           capture_output=True, text=True, timeout=TIMEOUT_S)
-        except Exception as exc:                            # noqa: BLE001
-            return None, f"{type(exc).__name__}: {exc}"
-        f = Path(out) / "measure.json"
-        if not f.is_file():
-            return None, "the measurement stage wrote no measure.json"
-        data = json.loads(f.read_text(encoding="utf-8"))
-        if not data.get("ok", True):
-            return None, data.get("error", "the measurement stage failed")
+            process = subprocess.run([command, '-u', str(Path(out)/'user.cfg'), '-s', str(Path(out)/'system.cfg'), str(HERE/'measure_stage.py')], env=env,
+                                     stdin=subprocess.DEVNULL, capture_output=True,
+                                     text=True, encoding='utf-8', errors='replace', timeout=max(1,timeout))
+        except subprocess.TimeoutExpired:
+            return None, 'The measurement exceeded its time limit'
+        except OSError as exc:
+            raise InfrastructureError('Could not start FreeCAD: %s' % exc) from exc
+        output = Path(out)/'measure.json'
+        if not output.is_file():
+            tail = (process.stderr+'\n'+process.stdout)[-2500:]
+            raise InfrastructureError('FreeCAD wrote no measurement (exit %s): %s' % (process.returncode,tail))
+        try:
+            data = json.loads(output.read_text(encoding='utf-8'),
+                              parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+        except (ValueError,OSError) as exc:
+            raise InfrastructureError('FreeCAD wrote an invalid measurement: %s' % exc) from exc
+        if not data.get('ok'):
+            return None, data.get('error','FreeCAD could not read this document')
+        if process.returncode:
+            raise InfrastructureError('FreeCAD exited unsuccessfully after writing a measurement')
+        if data.get('schema_version') != SCHEMA_VERSION:
+            raise InfrastructureError('The measurement schema is incompatible with the grader')
         return data, None
 
 
-def build_state(candidate_path):
-    """Measure the candidate once; the checks read what this returns."""
-    measurement, error = run_stage(candidate_path)
-    return {"candidate": candidate_path, "measurement": measurement or {}, "error": error}
+def load_reference(timeout=TIMEOUT_S):
+    if not REFERENCE.is_file():
+        raise InfrastructureError('Missing frozen reference: run tools/fetch.py to download CAD assets')
+    data,error = run_stage(REFERENCE, timeout)
+    if error or not data['build']['valid']:
+        raise InfrastructureError('The frozen reference cannot be measured: %s' % (error or data['build']['errors']))
+    if not data['motion'].get('supported'):
+        raise InfrastructureError('The reference motion test is unavailable: %s' % data['motion'].get('error'))
+    return data
+
+
+def build_state(candidate_path, reference=None, timeout=TIMEOUT_S):
+    started = time.monotonic()
+    reference = reference if reference is not None else load_reference(timeout)
+    measurement,error = run_stage(candidate_path, timeout-(time.monotonic()-started))
+    return {'candidate':str(candidate_path), 'measurement':measurement or {},
+            'reference':reference, 'error':error}
+
+
+def eigenfacts(shape):
+    values, axes = np.linalg.eigh(np.asarray(shape['inertia'],dtype=float))
+    return np.maximum(values,1e-12),axes
+
+
+def shape_descriptor(shape):
+    values,_ = eigenfacts(shape)
+    volume = max(shape['volume'],1e-12)
+    # Remove size ONLY for matching roles. The actual grade retains mm.
+    return np.r_[np.log(values/(volume**(5/3))), math.log(max(shape['area'],1e-12)/volume**(2/3))]
+
+
+def matching(reference, candidate):
+    """Match roles by shape; spatial information only breaks repeated-part ties."""
+    rp,cp = reference['parts'],candidate['parts']
+    if not rp or not cp:
+        return [], len(rp), len(cp)
+    rd = np.array([shape_descriptor(reference['shapes'][p.get('shape',p['source'])]) for p in rp])
+    cd = np.array([shape_descriptor(candidate['shapes'][p.get('shape',p['source'])]) for p in cp])
+    cost = np.mean(np.abs(rd[:,None,:]-cd[None,:,:]),axis=2)
+    initial_r,initial_c=linear_sum_assignment(cost)
+    rv=np.array([max(p['volume'],1e-12) for p in rp])
+    cv=np.array([max(p['volume'],1e-12) for p in cp])
+    log_scale=float(np.median(np.log(cv[initial_c]/rv[initial_r])))
+    cost += 0.3*np.abs(np.log(cv[None,:]/rv[:,None])-log_scale)
+    rcent = np.array([p['centre'] for p in rp]); rcent-=rcent.mean(axis=0)
+    ccent = np.array([p['centre'] for p in cp]); ccent-=ccent.mean(axis=0)
+    _,ra = np.linalg.eigh(rcent.T@rcent)
+    _,ca = np.linalg.eigh(ccent.T@ccent)
+    scale = max(float(np.linalg.norm(rcent,axis=1).max()),1)
+    best = None
+    for permutation in itertools.permutations(range(3)):
+        for signs in itertools.product((-1,1),repeat=3):
+            rotation = ca[:,permutation] @ np.diag(signs) @ ra.T
+            aligned = ccent@rotation
+            positional = np.linalg.norm(rcent[:,None,:]-aligned[None,:,:],axis=2)/scale
+            rows,cols = linear_sum_assignment(cost + 0.0001*np.minimum(positional,2))
+            value = float(sum(cost[rows,cols]+0.0001*np.minimum(positional[rows,cols],2)))
+            if best is None or value < best[0]:
+                best = value,rows,cols
+    pairs = [(int(r),int(c)) for r,c in zip(best[1],best[2]) if cost[r,c] <= 0.7]
+    return pairs,len(rp)-len(pairs),len(cp)-len(pairs)
+
+
+def surface_error(reference, candidate):
+    """Compare surfaces after a rigid move or a reflection; never change scale."""
+    r=np.asarray(reference['points'],dtype=float)
+    c=np.asarray(candidate['points'],dtype=float)
+    _,ra=eigenfacts(reference); _,ca=eigenfacts(candidate)
+    tree_r=cKDTree(r)
+    starts=[]
+    for permutation in itertools.permutations(range(3)):
+        for signs in itertools.product((-1,1),repeat=3):
+            transform=ca[:,permutation]@np.diag(signs)@ra.T
+            moved=c@transform
+            error=float(np.quantile(np.r_[tree_r.query(moved)[0],cKDTree(moved).query(r)[0]],0.9))
+            starts.append((error,moved))
+    best=min(item[0] for item in starts)
+    # Round/cubic parts have non-unique inertia axes. Refine the best starting
+    # orientations so rotating one of these parts cannot cause a false penalty.
+    for error,moved in sorted(starts,key=lambda item:item[0])[:4]:
+        for _ in range(12):
+            _,nearest=tree_r.query(moved)
+            target=r[nearest]
+            mc=moved.mean(axis=0); tc=target.mean(axis=0)
+            u,_,vt=np.linalg.svd((moved-mc).T@(target-tc))
+            correction=u@vt
+            if np.linalg.det(correction)<0:
+                u[:,-1]*=-1
+                correction=u@vt
+            moved=(moved-mc)@correction+tc
+        distances=np.r_[tree_r.query(moved)[0],cKDTree(moved).query(r)[0]]
+        best=min(best,float(np.quantile(distances,0.9)))
+    return best
+
+
+def geometry_score(reference, candidate):
+    if reference == candidate:
+        return 1.0
+    rv,cv = reference['volume'],candidate['volume']
+    ri,_ = eigenfacts(reference); ci,_ = eigenfacts(candidate)
+    # Convert mass moments into length measures. Volume alone misses moved holes.
+    lengths_r = np.sqrt(ri/max(rv,1e-12)); lengths_c=np.sqrt(ci/max(cv,1e-12))
+    size_error = float(np.max(np.abs(lengths_r-lengths_c)/np.maximum(lengths_r,1)))
+    volume_error = abs(rv-cv)/max(rv,cv,1)
+    area_error = abs(reference['area']-candidate['area'])/max(reference['area'],candidate['area'],1)
+    characteristic = max(float(np.max(lengths_r)),1)
+    surface=surface_error(reference,candidate)
+    spacing=max(math.sqrt(reference['area']/len(reference['points'])),math.sqrt(candidate['area']/len(candidate['points'])))
+    surface_score=band(surface,1.5*spacing,1.5*spacing+0.3*characteristic)
+    radius_score=1.0
+    if reference['cylinders'] and candidate['cylinders']:
+        radii=sorted({round(c['radius'],6) for c in reference['cylinders']})
+        observed=sorted({round(c['radius'],6) for c in candidate['cylinders']})
+        radius_score=average(band(min(abs(r-a) for a in observed)/max(r,1),0.003,0.4) for r in radii)
+    # Sampling spacing is larger than BRep numerical tolerance; exact dimension
+    # and mass checks prevent a sparse sample from hiding a wrong size.
+    return min(band(size_error,0.003,0.4), band(volume_error,0.008,0.65),
+               band(area_error,0.008,0.65),surface_score,radius_score)
+
+
+def drawing_pin(shape):
+    # The main drawing includes two ISO 8752 pins (diameter 6, length 16).
+    # They are absent from the frozen reference, so a candidate must not lose
+    # completeness for adding these explicitly requested small parts.
+    points=np.asarray(shape['points'])
+    _,axes=eigenfacts(shape)
+    extents=sorted(np.ptp(points@axes,axis=0))
+    return (5.4<=extents[0]<=7.0 and 5.4<=extents[1]<=7.0
+            and 15.4<=extents[2]<=16.5 and 250<=shape['volume']<=480)
+
+
+def unexplained_extras(reference,candidate,pairs):
+    matched={c for r,c in pairs}
+    allowance=max(0,2-sum(drawing_pin(reference['shapes'][p.get('shape',p['source'])]) for p in reference['parts']))
+    unexpected=0
+    for c,part in enumerate(candidate['parts']):
+        if c in matched:
+            continue
+        if allowance and drawing_pin(candidate['shapes'][part.get('shape',part['source'])]):
+            allowance-=1
+        else:
+            unexpected+=1
+    return unexpected
+
+
+def joint_quality(joint):
+    if not joint['valid'] or joint['suppressed']:
+        return 0.0
+    return min(band(joint['gap'],0.05,5.0),band(joint['axis_error'],0.2,20.0),
+               band(joint['rotation_error'],0.2,20.0))
+
+
+class FixedGroups:
+    def __init__(self, ids):
+        self.parent = {i:i for i in ids}
+    def find(self, i):
+        if self.parent[i] != i:
+            self.parent[i] = self.find(self.parent[i])
+        return self.parent[i]
+    def join(self, a,b):
+        self.parent[self.find(a)] = self.find(b)
+
+
+def joint_coverage(reference,candidate,pairs):
+    mapped = {reference['parts'][r]['id']:candidate['parts'][c]['id'] for r,c in pairs}
+    groups = FixedGroups([p['id'] for p in candidate['parts']])
+    for joint in candidate['joints']:
+        if joint['type'] == 'Fixed' and joint_quality(joint) == 1:
+            members = joint['members'][0]+joint['members'][1]
+            for a,b in zip(members,members[1:]):
+                groups.join(a,b)
+    scores=[]
+    # Missing parts are charged to completeness. Here we grade connections
+    # between the parts that exist, to avoid mechanically repeating penalties.
+    for expected in reference['joints']:
+        left=[mapped[i] for i in expected['members'][0] if i in mapped]
+        right=[mapped[i] for i in expected['members'][1] if i in mapped]
+        if not left or not right:
+            continue
+        best=0.0
+        if expected['type']=='Fixed' and any(groups.find(a)==groups.find(b) for a in left for b in right):
+            best=1.0
+        for actual in candidate['joints']:
+            if actual['type']!=expected['type']:
+                continue
+            a,b=actual['members']
+            def overlaps(first,second):
+                return any(groups.find(x)==groups.find(y) for x in first for y in second)
+            if (overlaps(left,a) and overlaps(right,b)) or (overlaps(left,b) and overlaps(right,a)):
+                best=max(best,joint_quality(actual))
+        scores.append(best)
+    return average(scores,default=1.0),len(scores)
+
+
+def parameter_scores(reference,candidate,pairs):
+    coverage=[]; driving=[]
+    visited=set()
+    for r,c in pairs:
+        rp=reference['parts'][r]; cp=candidate['parts'][c]
+        # Imported bolts in the reference are not demands to rebuild thread sketches.
+        expected_parameters=reference['parameters'][rp['source']]
+        if not expected_parameters['controls'] or not any(p['ok'] and p['change']>=0.0001 for p in expected_parameters['probes']):
+            continue
+        key=(rp['source'],cp['source'])
+        if key in visited:
+            continue
+        visited.add(key)
+        expected=reference['parameters'][rp['source']]
+        actual=candidate['parameters'][cp['source']]
+        # Credit the part role, rather than requiring the reference's sketch
+        # direction names or its exact count of dimensions. A pad property,
+        # a spreadsheet and an equivalent sketch are equally legitimate.
+        coverage.append(1.0 if actual['controls'] else 0.0)
+        successful=[p for p in actual['probes'] if p['ok']]
+        response=max((p['change'] for p in successful),default=0.0)
+        driving.append(clamp(response/0.0001))
+
+    return average(coverage,default=1.0),average(driving,default=1.0),len(visited)
+
+
+def motion_score(measurement):
+    motion=measurement['motion']
+    if not motion.get('supported'):
+        raise InfrastructureError('Motion measurement unavailable: %s' % motion.get('error'))
+    results=[]
+    for probe in motion['probes']:
+        if not probe['ok']:
+            results.append(0)
+            continue
+        results.append(min(band(probe['gap'],0.05,5),band(probe['axis_error'],0.2,20),
+                           min(clamp(probe['relative_motion']/0.01),clamp(probe['relative_motion']/(10*max(probe.get('input_fraction',0.05),1e-6)))),probe['limit_score']))
+    return average(results)
+
+
+def working_layout(reference, candidate, pairs):
+    """The mechanism hangs below the ring, whatever the world axes or mirror."""
+    neighbours = {p['id']:set() for p in reference['parts']}
+    for joint in reference['joints']:
+        for a in joint['members'][0]:
+            for b in joint['members'][1]:
+                if a != b:
+                    neighbours[a].add(b)
+                    neighbours[b].add(a)
+    landmarks=[]
+    for index,part in enumerate(reference['parts']):
+        if len(neighbours[part['id']]) != 1:
+            continue
+        shape=reference['shapes'][part.get('shape',part['source'])]
+        _,axes=eigenfacts(shape)
+        extents=sorted(np.ptp(np.asarray(shape['points'])@axes,axis=0))
+        if 12 <= extents[0] <= 20 and extents[1] > 40 and extents[2] > 60:
+            landmarks.append(index)
+    if not landmarks:
+        return 1.0
+    ring=max(landmarks,key=lambda i:reference['parts'][i]['volume'])
+    ids={part['id']:i for i,part in enumerate(reference['parts'])}
+    shackle=ids[next(iter(neighbours[reference['parts'][ring]['id']]))]
+    mapped=dict(pairs)
+    if ring not in mapped or shackle not in mapped:
+        return 1.0  # Missing hardware is already charged to completeness.
+    def projection(data, mapping):
+        top=np.asarray(data['parts'][mapping[ring]]['centre'])
+        below=np.asarray(data['parts'][mapping[shackle]]['centre'])
+        up=top-below
+        length=np.linalg.norm(up)
+        if length < 1e-6:
+            return 0.0
+        weights=[]; values=[]
+        for r,c in mapping.items():
+            if r not in (ring,shackle):
+                weights.append(reference['parts'][r]['volume'])
+                values.append(np.dot(np.asarray(data['parts'][c]['centre'])-below,up/length))
+        return float(np.average(values,weights=weights)) if weights else 0.0
+    expected=projection(reference,{r:r for r,c in pairs})
+    if expected >= -1e-6:
+        return 1.0
+    return band(projection(candidate,mapped)/abs(expected),-0.1,0.1)
 
 
 def checks(state):
-    """One entry per component: {name: (score in [0, 1], description)}.
-
-    Every one scores 0.0 and says so, except the gate. Replace them with
-    real measurements taken from state["measurement"].
-    """
-    err = state["error"]
-    out = {"executes and builds geometry": (
-        1.0 if err is None else 0.0,
-        "the measurement stage ran" if err is None else f"the measurement stage failed: {err}")}
-    for name in ALL_CRITERIA:
-        out.setdefault(name, (0.0, TODO))
-    return out
+    data=state['measurement']; reference=state['reference']; error=state['error']
+    valid=not error and data.get('build',{}).get('valid',False)
+    out={'executes and builds geometry':(float(valid),'The document rebuilds and contains valid solids' if valid
+                                         else 'No valid rebuilt assembly: %s' % (error or data.get('build',{}).get('errors')))}
+    if not valid:
+        for name in ALL_CRITERIA:
+            out.setdefault(name,(0.0,'Not evaluated because the document did not build'))
+        return out
+    pairs,missing,extra=matching(reference,data)
+    extra=unexplained_extras(reference,data,pairs)
+    count=len(reference['parts'])
+    out['assembly completeness']=(clamp(1-(missing+extra)/max(count,1)),
+        '%s of %s reference parts matched; %s missing and %s extra parts' % (len(pairs),count,missing,extra))
+    scores=[]; cache={}
+    for r,c in pairs:
+        rp=reference['parts'][r]; cp=data['parts'][c]
+        key=(rp.get('shape',rp['source']),cp.get('shape',cp['source']))
+        if key not in cache:
+            cache[key]=geometry_score(reference['shapes'][key[0]],data['shapes'][key[1]])
+        scores.append(cache[key])
+    out['geometry and dimensions']=(average(scores),'Compared shape and size in mm for %s installed parts; reflections allowed' % len(pairs))
+    mate,n=joint_coverage(reference,data,pairs)
+    out['pantograph joints mated']=(mate,'Checked %s required connections between matched parts' % n)
+    movement=motion_score(data)
+    hanging=working_layout(reference,data,pairs)
+    out['mechanism articulates within its limits']=(min(movement,hanging),
+        'Checked %s positions: movement %.3f, mechanism below suspension ring %.3f' %
+        (len(data['motion']['probes']),movement,hanging))
+    coverage,drive,n=parameter_scores(reference,data,pairs)
+    out['dimensional control coverage']=(coverage,'Found upstream editable dimensions on %s modeled part roles' % n)
+    out['dimensions drive the geometry']=(drive,'Changed dimensions on %s part roles and checked the resulting shapes' % n)
+    return {name:(clamp(score),description) for name,(score,description) in out.items()}
 
 
 def finalize(results):
-    gated = any(results[n][0] < 1.0 for n in MUST_PASS)
-    score = 0.0 if gated else sum(ALL_CRITERIA[n] * results[n][0] for n in ALL_CRITERIA)
-    return {
-        "score": round(score, 4),
-        "max_score": MAX_SCORE,
-        "passed": score >= MAX_SCORE,
-        "subscores": {n: {"score": s, "weight": ALL_CRITERIA[n], "description": d}
-                      for n, (s, d) in results.items()},
-    }
+    gated=any(results[name][0]<1 for name in MUST_PASS)
+    raw=0.0 if gated else sum(ALL_CRITERIA[name]*results[name][0] for name in ALL_CRITERIA)
+    return {'score':round(raw,4),'max_score':MAX_SCORE,'passed':raw>=MAX_SCORE,
+            'subscores':{name:{'score':round(clamp(score),6),'weight':ALL_CRITERIA[name],'description':description}
+                         for name,(score,description) in results.items()}}
 
 
-def main(argv):
-    candidate = argv[1] if len(argv) > 1 else None
-    print(json.dumps(finalize(checks(build_state(candidate))), indent=2))
-    return 0
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('candidate',nargs='?',type=Path)
+    parser.add_argument('--corpus',action='store_true',help='Measure the reference once, then grade every example')
+    parser.add_argument('--measurement-out',type=Path,help='Keep the measured facts for inspection')
+    args=parser.parse_args(argv)
+    try:
+        started=time.monotonic()
+        reference=load_reference()
+        if args.corpus:
+            paths=[TASK/'solution'/'solution.FCStd']+sorted((TASK/'examples').glob('*/*.FCStd'))
+            report=[]
+            for path in paths:
+                state=build_state(path,reference)
+                report.append(dict(candidate=str(path),**finalize(checks(state))))
+            print(json.dumps(report,indent=2,allow_nan=False))
+        else:
+            state=build_state(args.candidate,reference, TIMEOUT_S-(time.monotonic()-started))
+            if args.measurement_out:
+                args.measurement_out.parent.mkdir(parents=True,exist_ok=True)
+                args.measurement_out.write_text(json.dumps(state,indent=2,allow_nan=False),encoding='utf-8')
+            print(json.dumps(finalize(checks(state)),indent=2,allow_nan=False))
+        return 0
+    except InfrastructureError as exc:
+        print(json.dumps({'status':'error','error':str(exc),'score':0,'max_score':MAX_SCORE,'passed':False},indent=2))
+        return 2
 
 
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+if __name__=='__main__':
+    sys.exit(main())
