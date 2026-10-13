@@ -22,6 +22,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from freecad_process import discover_command, run_freecad
+
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
@@ -33,6 +35,7 @@ TIMEOUT_S = 600
 SCHEMA_VERSION = 2
 ENV_FILES = (TASK.parents[2] / '.env', TASK.parents[1] / '.env', TASK / '.env')
 DIAGNOSTICS_OUT = None
+FREECAD_MODE = 'auto'
 ALL_CRITERIA = {
     'executes and builds geometry': 0,
     'geometry matches ground truth': 1,
@@ -94,11 +97,13 @@ def load_freecad_command():
                     break
             if command:
                 break
-    command = command or shutil.which('freecadcmd') or shutil.which('FreeCADCmd.exe')
+    command = command or discover_command()
     if not command:
         raise InfrastructureError('Set FREECAD_CMD in the repository .env to the FreeCAD 1.1 headless executable')
     if not Path(command).is_file() and not shutil.which(command):
         raise InfrastructureError('FREECAD_CMD does not point to an existing executable: %s' % command)
+    if Path(command).name.lower() in ('freecad.exe','freecad'):
+        raise InfrastructureError('Use the headless FreeCADCmd executable, not FreeCAD GUI')
     return command
 
 
@@ -111,59 +116,68 @@ def keep_diagnostics(out, candidate_path, stdout='', stderr=''):
         if isinstance(value, bytes):
             value = value.decode('utf-8', errors='replace')
         (target/name).write_text(value or '', encoding='utf-8')
-    for name in ('measure.json', 'progress.json'):
-        file = Path(out)/name
+    for name in ('measure.json','progress.json','launch.json'):
+        file=Path(out)/name
         if file.exists():
-            shutil.copy2(file, target/name)
+            shutil.copy2(file,target/name)
+    attempts=Path(out).parent/'attempts.json'
+    if attempts.exists():
+        shutil.copy2(attempts,target/attempts.name)
+        for folder in Path(out).parent.glob('attempt-*'):
+            saved=target/folder.name
+            saved.mkdir(exist_ok=True)
+            for name in ('stdout.log','stderr.log','progress.json','launch.json'):
+                file=folder/name
+                if file.exists():
+                    shutil.copy2(file,saved/name)
 
 
-def run_stage(candidate_path, timeout=TIMEOUT_S):
-    """Return (measurement, candidate error); setup failures raise explicitly."""
+def run_script(script, candidate_path=None, timeout=TIMEOUT_S):
     command = load_freecad_command()
-    if not candidate_path or not Path(candidate_path).is_file():
-        return None, 'No candidate FCStd file was found'
     with tempfile.TemporaryDirectory(prefix='sling-measure-') as out:
-        env = dict(os.environ, FC_STAGE_INPUT=str(Path(candidate_path).resolve()), FC_STAGE_OUT=out)
-        # FreeCAD has its own Python/Qt. A scoring virtualenv's modules and
-        # Qt plugins may have a different ABI and must not enter that process.
-        for key in ('PYTHONHOME', 'PYTHONPATH', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH'):
-            env.pop(key, None)
+        extra = {'FC_STAGE_INPUT':str(Path(candidate_path).resolve())} if candidate_path else {}
+        label = candidate_path or 'startup-probe'
         try:
-            process = subprocess.run([command, '-u', str(Path(out)/'user.cfg'), '-s', str(Path(out)/'system.cfg'), str(HERE/'measure_stage.py')], env=env,
-                                     stdin=subprocess.DEVNULL, capture_output=True,
-                                     text=True, encoding='utf-8', errors='replace', timeout=max(1,timeout))
+            record = run_freecad(command, script, out, timeout, extra, mode=FREECAD_MODE)
         except subprocess.TimeoutExpired as exc:
-            keep_diagnostics(out, candidate_path, exc.stdout, exc.stderr)
-            progress = Path(out)/'progress.json'
+            folder = getattr(exc,'stage_directory',Path(out))
+            keep_diagnostics(folder, label, exc.stdout, exc.stderr)
+            progress = folder/'progress.json'
             stage = progress.read_text(encoding='utf-8') if progress.exists() else 'startup'
             raise InfrastructureError('FreeCAD exceeded its time limit; last stage: %s' % stage)
         except OSError as exc:
             raise InfrastructureError('Could not start FreeCAD: %s' % exc) from exc
-        output = Path(out)/'measure.json'
-        progress = Path(out)/'progress.json'
-        stage = progress.read_text(encoding='utf-8') if progress.exists() else 'before Python script startup'
-        keep_diagnostics(out, candidate_path, process.stdout, process.stderr)
-        if process.returncode:
-            tail = (process.stderr+'\n'+process.stdout)[-2500:]
-            raise InfrastructureError('FreeCAD terminated (exit %s); last stage: %s; %s' %
-                                      (process.returncode, stage, tail))
-        if not output.is_file():
-            tail = (process.stderr+'\n'+process.stdout)[-2500:]
-            raise InfrastructureError('FreeCAD wrote no measurement; last stage: %s; %s' % (stage,tail))
+        folder=record['directory']
+        output=folder/'measure.json'
+        progress=folder/'progress.json'
+        stage=progress.read_text(encoding='utf-8') if progress.exists() else 'before Python script startup'
+        keep_diagnostics(folder,label,record['stdout'],record['stderr'])
+        if record['returncode'] or not output.is_file():
+            tail=(record['stderr']+'\n'+record['stdout'])[-2500:]
+            raise InfrastructureError('FreeCAD terminated or wrote no measurement (exit %s); last stage: %s; %s. Run --doctor --diagnostics-out freecad-logs' %
+                                      (record['returncode'],stage,tail))
         try:
-            data = json.loads(output.read_text(encoding='utf-8'),
-                              parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
+            data=json.loads(output.read_text(encoding='utf-8'),
+                            parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
         except (ValueError,OSError) as exc:
             raise InfrastructureError('FreeCAD wrote an invalid measurement: %s' % exc) from exc
         if not data.get('ok'):
-            if data.get('error_kind') == 'infrastructure':
-                raise InfrastructureError(data.get('error', 'FreeCAD API is unavailable'))
-            return None, data.get('error','FreeCAD could not read this document')
-        if process.returncode:
-            raise InfrastructureError('FreeCAD exited unsuccessfully after writing a measurement')
-        if data.get('schema_version') != SCHEMA_VERSION:
-            raise InfrastructureError('The measurement schema is incompatible with the grader')
-        return data, None
+            if data.get('error_kind')=='infrastructure':
+                raise InfrastructureError(data.get('error','FreeCAD API is unavailable'))
+            return None,data.get('error','FreeCAD could not read this document')
+        data['launcher']={'backend':record['attempts'][-1]['backend'],
+                          'executable':record['attempts'][-1]['argv'][0]}
+        return data,None
+
+
+def run_stage(candidate_path, timeout=TIMEOUT_S):
+    """Setup errors raise; a readable but invalid CAD file returns its error."""
+    if not candidate_path or not Path(candidate_path).is_file():
+        return None,'No candidate FCStd file was found'
+    data,error=run_script(HERE/'measure_stage.py',candidate_path,timeout)
+    if data and data.get('schema_version')!=SCHEMA_VERSION:
+        raise InfrastructureError('The measurement schema is incompatible with the grader')
+    return data,error
 
 
 def load_reference(timeout=TIMEOUT_S):
@@ -565,7 +579,9 @@ def checks(state):
     signature,dimension_rows=signature_dimensions(reference,data,pairs)
     out['signature dimensions present']=(signature,
         'Measured short-link length 150, hole spacing 120, width 30 and thickness 10 mm on %s instances' % len(dimension_rows))
-    state['diagnostics']={'assembly_completeness':completeness,
+    state['diagnostics']={'freecad_version':data.get('version'),
+                          'launcher':data.get('launcher'),
+                          'assembly_completeness':completeness,
                           'matched_part_shape_score':average(scores),
                           'hanging_arrangement':hanging,
                           'signature_dimensions':dimension_rows}
@@ -581,27 +597,46 @@ def finalize(results):
 
 
 def main(argv=None):
-    global DIAGNOSTICS_OUT
+    global DIAGNOSTICS_OUT, FREECAD_MODE
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('candidate',nargs='?',type=Path)
     parser.add_argument('--corpus',action='store_true',help='Measure the reference once, then grade every example')
     parser.add_argument('--measurement-out',type=Path,help='Keep the measured facts for inspection')
     parser.add_argument('--diagnostics-out',type=Path,help='Keep FreeCAD logs and last measurement stage, including crashes')
+    parser.add_argument('--doctor',action='store_true',help='Check FreeCAD startup and API without loading a CAD assembly')
+    parser.add_argument('--freecad-mode',choices=('auto','cli','embedded-python'),default='auto',help='Windows auto can bypass a failed console launcher using FreeCAD bundled Python')
+    parser.add_argument('--report-out',type=Path,help='Save the JSON result as UTF-8')
     args=parser.parse_args(argv)
-    if not args.corpus and args.candidate is None:
-        parser.error('provide a candidate FCStd path or --corpus')
+    if not args.doctor and not args.corpus and args.candidate is None:
+        parser.error('provide a candidate FCStd path, --corpus or --doctor')
     DIAGNOSTICS_OUT = args.diagnostics_out
+    FREECAD_MODE = args.freecad_mode
+    def emit(value):
+        payload=json.dumps(value,indent=2,allow_nan=False)
+        if args.report_out:
+            args.report_out.parent.mkdir(parents=True,exist_ok=True)
+            args.report_out.write_text(payload+'\n',encoding='utf-8')
+        print(payload)
     try:
+        if args.doctor:
+            data,error=run_script(HERE/'doctor_stage.py',timeout=45)
+            if error:
+                raise InfrastructureError(error)
+            emit(dict(status='ok',**data))
+            return 0
         started=time.monotonic()
+        print('Measuring frozen reference...',file=sys.stderr,flush=True)
         reference=load_reference()
         if args.corpus:
             paths=[TASK/'solution'/'solution.FCStd']+sorted((TASK/'examples').glob('*/*.FCStd'))
             report=[]
-            for path in paths:
+            for index,path in enumerate(paths,1):
+                print('Measuring %s (%s/%s)...' % (path.parent.name,index,len(paths)),file=sys.stderr,flush=True)
                 state=build_state(path,reference)
                 result=finalize(checks(state))
+                print('Score: %s / %s' % (result['score'],MAX_SCORE),file=sys.stderr,flush=True)
                 report.append(dict(candidate=str(path),diagnostics=state.get('diagnostics',{}),**result))
-            print(json.dumps(report,indent=2,allow_nan=False))
+            emit(report)
         else:
             state=build_state(args.candidate,reference, TIMEOUT_S-(time.monotonic()-started))
             result=finalize(checks(state))
@@ -609,10 +644,10 @@ def main(argv=None):
             if args.measurement_out:
                 args.measurement_out.parent.mkdir(parents=True,exist_ok=True)
                 args.measurement_out.write_text(json.dumps(state,indent=2,allow_nan=False),encoding='utf-8')
-            print(json.dumps(result,indent=2,allow_nan=False))
+            emit(result)
         return 0
     except InfrastructureError as exc:
-        print(json.dumps({'status':'error','error':str(exc),'score':0,'max_score':MAX_SCORE,'passed':False},indent=2))
+        emit({'status':'error','error':str(exc),'score':0,'max_score':MAX_SCORE,'passed':False})
         return 2
 
 

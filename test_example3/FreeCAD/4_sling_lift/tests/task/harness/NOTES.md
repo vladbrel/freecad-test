@@ -129,8 +129,9 @@ it is distinct from that limited parameter-response test.
 Tested natively on official FreeCAD 1.1.4, Windows headless, including the
 full reference command and measurements of all five examples. The earlier
 measurement code also ran successfully on that release: incompatibility of
-UtilsAssembly with 1.1.4 is not established. The reported native termination
-was not reproduced. Python exceptions are caught; native termination cannot
+UtilsAssembly with 1.1.4 is not established. The reported native termination was reproduced with a Cyrillic script path
+on Windows 1.1.4. The CLI failed before Python started; the bundled-Python
+fallback recovered successfully. ASCII paths containing spaces worked. Python exceptions are caught; native termination cannot
 be caught by Python inside the dying process. The parent detects it, reports
 the last recorded stage and retains diagnostics when requested.
 
@@ -149,7 +150,7 @@ validation; local 1.1.4 results must not be presented as Docker validation.
 
 ## Current validation (2026-10-13)
 
-The JSON report is `validation_scores.json`. There are 21 scoring/setup
+The JSON report is `validation_scores.json`. There are 26 scoring/setup
 regressions, including the original criterion names, integer weights, mirrors,
 actual size changes, partial penalties, fake joints, decorative parameters,
 .env parsing, crashes/timeouts, signature spacing and outer-cap rejection.
@@ -173,3 +174,22 @@ measurements. Both move within it. Their hanging/folding arrangement differs.
 Whether that working arrangement is mandatory needs clarification from the
 employer. The grader reports it without inventing a limits penalty. See the
 unsent clarification draft in DECISIONS.md. This corpus issue remains open.
+
+
+## Portable launcher update
+
+`freecad_process.py` starts the official Windows root launcher when available,
+then the direct console executable, then (only on startup failure) the same
+bundle's Python. No CAD trial is retried once progress exists. Linux/macOS use
+the normal CLI. The CLI receives only the script path, without -u/-s flags.
+FreeCAD's documented FREECAD_USER_HOME/DATA/TEMP variables point to precreated
+temporary directories. They isolate settings without CLI configuration flags.
+Subprocess cwd is the Windows install directory, stdin is an empty pipe,
+stdout/stderr are files, and no shell/console-creation flags are used.
+
+`--doctor` checks imports, geometry, PartDesign and Assembly before loading
+assets. `--report-out` saves UTF-8 JSON. Root `run_evaluation.py` handles setup
+and writes a readable table. See SUBMISSION.md for reviewer instructions.
+CLI and embedded Python both measured the complete reference at 6/6. Native
+Windows tests covered the Unicode startup failure and automatic recovery;
+Linux/macOS selection is unit-tested, not natively executed here.

@@ -1,3 +1,8 @@
+For submission and one-command setup, start with [SUBMISSION.md](../SUBMISSION.md).
+From the repository root: `python run_evaluation.py`.
+This creates a private environment, checks FreeCAD, verifies CAD assets and
+writes `results/scores.md` plus `results/scores.json`.
+
 # Sling Lift grader
 
 This repository contains a deterministic grader for the FreeCAD 1.1 Sling
@@ -114,6 +119,9 @@ python FreeCAD/4_sling_lift/tests/task/harness/harness.py --corpus --diagnostics
 ```
 
 The error includes the last recorded stage and FreeCAD version when available.
+On Windows, a failed console startup can fall back to the Python shipped
+with the same FreeCAD installation. Use `--doctor` for a quick check and
+`--freecad-mode embedded-python` to explicitly bypass the console launcher.
 Python exceptions produce JSON inside the measurement process; native crashes
 are detected by the parent process. A native crash cannot be caught by Python
 `try/except`. FreeCAD uses its own Python and Qt, isolated from those settings

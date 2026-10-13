@@ -2,12 +2,26 @@
   "freecad_version": "1.1.4",
   "platform": "Windows headless",
   "rubric": "original six criteria, continuous scores",
-  "scoring_unit_tests": 21,
+  "scoring_unit_tests": 26,
   "unresolved": "joint_limits_swapped has the same enabled slider bounds as the mirrored example; pose is diagnostic only",
   "results": [
     {
       "candidate": "solution",
       "diagnostics": {
+        "freecad_version": [
+          "1",
+          "1",
+          "4",
+          "20260928 (Git shallow)",
+          "Unknown",
+          "2026/09/28 13:46:34",
+          "(HEAD detached at 4fd3bf320)",
+          "4fd3bf320d9566a27e60069fc8387448aaa3a094"
+        ],
+        "launcher": {
+          "backend": "cli",
+          "executable": "C:\\Users\\Skind\\AppData\\Local\\Temp\\codex-freecad-1.1.4\\FreeCAD_1.1.4-Windows-x86_64-py311\\FreeCADCmd.exe"
+        },
         "assembly_completeness": 1.0,
         "matched_part_shape_score": 1.0,
         "hanging_arrangement": 1.0,
@@ -90,6 +104,20 @@
     {
       "candidate": "adversarial_assembly_mirrored_relative_to_ground_truth",
       "diagnostics": {
+        "freecad_version": [
+          "1",
+          "1",
+          "4",
+          "20260928 (Git shallow)",
+          "Unknown",
+          "2026/09/28 13:46:34",
+          "(HEAD detached at 4fd3bf320)",
+          "4fd3bf320d9566a27e60069fc8387448aaa3a094"
+        ],
+        "launcher": {
+          "backend": "cli",
+          "executable": "C:\\Users\\Skind\\AppData\\Local\\Temp\\codex-freecad-1.1.4\\FreeCAD_1.1.4-Windows-x86_64-py311\\FreeCADCmd.exe"
+        },
         "assembly_completeness": 1.0,
         "matched_part_shape_score": 0.9929225077108197,
         "hanging_arrangement": 1.0,
@@ -172,6 +200,20 @@
     {
       "candidate": "adversarial_dummy_joints_inflate_the_count",
       "diagnostics": {
+        "freecad_version": [
+          "1",
+          "1",
+          "4",
+          "20260928 (Git shallow)",
+          "Unknown",
+          "2026/09/28 13:46:34",
+          "(HEAD detached at 4fd3bf320)",
+          "4fd3bf320d9566a27e60069fc8387448aaa3a094"
+        ],
+        "launcher": {
+          "backend": "cli",
+          "executable": "C:\\Users\\Skind\\AppData\\Local\\Temp\\codex-freecad-1.1.4\\FreeCAD_1.1.4-Windows-x86_64-py311\\FreeCADCmd.exe"
+        },
         "assembly_completeness": 1.0,
         "matched_part_shape_score": 0.99292250771082,
         "hanging_arrangement": 1.0,
@@ -254,6 +296,20 @@
     {
       "candidate": "adversarial_half_finished_missing_features",
       "diagnostics": {
+        "freecad_version": [
+          "1",
+          "1",
+          "4",
+          "20260928 (Git shallow)",
+          "Unknown",
+          "2026/09/28 13:46:34",
+          "(HEAD detached at 4fd3bf320)",
+          "4fd3bf320d9566a27e60069fc8387448aaa3a094"
+        ],
+        "launcher": {
+          "backend": "cli",
+          "executable": "C:\\Users\\Skind\\AppData\\Local\\Temp\\codex-freecad-1.1.4\\FreeCAD_1.1.4-Windows-x86_64-py311\\FreeCADCmd.exe"
+        },
         "assembly_completeness": 0.8837209302325582,
         "matched_part_shape_score": 0.9671684540272455,
         "hanging_arrangement": 1.0,
@@ -336,6 +392,20 @@
     {
       "candidate": "adversarial_joint_limits_swapped",
       "diagnostics": {
+        "freecad_version": [
+          "1",
+          "1",
+          "4",
+          "20260928 (Git shallow)",
+          "Unknown",
+          "2026/09/28 13:46:34",
+          "(HEAD detached at 4fd3bf320)",
+          "4fd3bf320d9566a27e60069fc8387448aaa3a094"
+        ],
+        "launcher": {
+          "backend": "cli",
+          "executable": "C:\\Users\\Skind\\AppData\\Local\\Temp\\codex-freecad-1.1.4\\FreeCAD_1.1.4-Windows-x86_64-py311\\FreeCADCmd.exe"
+        },
         "assembly_completeness": 1.0,
         "matched_part_shape_score": 0.9929225077108198,
         "hanging_arrangement": 0.0,
@@ -418,6 +488,20 @@
     {
       "candidate": "adversarial_one_link_missing_joints_bridge_gap",
       "diagnostics": {
+        "freecad_version": [
+          "1",
+          "1",
+          "4",
+          "20260928 (Git shallow)",
+          "Unknown",
+          "2026/09/28 13:46:34",
+          "(HEAD detached at 4fd3bf320)",
+          "4fd3bf320d9566a27e60069fc8387448aaa3a094"
+        ],
+        "launcher": {
+          "backend": "cli",
+          "executable": "C:\\Users\\Skind\\AppData\\Local\\Temp\\codex-freecad-1.1.4\\FreeCAD_1.1.4-Windows-x86_64-py311\\FreeCADCmd.exe"
+        },
         "assembly_completeness": 0.9767441860465116,
         "matched_part_shape_score": 1.0,
         "hanging_arrangement": 1.0,
@@ -497,5 +581,17 @@
         }
       }
     }
-  ]
+  ],
+  "launch_validation": {
+    "cli_reference_score": 6,
+    "embedded_python_reference_score": 6,
+    "windows_cyrillic_cli_exit": 1,
+    "windows_cyrillic_auto_recovery": "embedded-python",
+    "ascii_paths_with_spaces": "passed",
+    "clean_python_venv_setup": "passed",
+    "native_platforms": [
+      "Windows 1.1.4"
+    ],
+    "posix_launch_selection": "unit tests only"
+  }
 }

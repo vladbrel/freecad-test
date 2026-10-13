@@ -10,3 +10,6 @@ venv/
 # Temporary local CAD diagnostics
 .audit/
 .env
+.venv-evaluation/
+results/
+submission/
