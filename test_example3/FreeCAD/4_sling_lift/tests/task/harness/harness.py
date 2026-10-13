@@ -11,6 +11,7 @@ measurements. Object names are used only to join records, never as answers.
 """
 import argparse
 import itertools
+import uuid
 import json
 import math
 import os
@@ -30,14 +31,16 @@ TASK = HERE.parents[2]
 REFERENCE = HERE.parent / 'reference' / 'solution.FCStd'
 TIMEOUT_S = 600
 SCHEMA_VERSION = 2
+ENV_FILES = (TASK.parents[2] / '.env', TASK.parents[1] / '.env', TASK / '.env')
+DIAGNOSTICS_OUT = None
 ALL_CRITERIA = {
     'executes and builds geometry': 0,
-    'assembly completeness': 1,
-    'geometry and dimensions': 1,
+    'geometry matches ground truth': 1,
     'pantograph joints mated': 1,
-    'mechanism articulates within its limits': 1,
-    'dimensional control coverage': 1,
+    'mechanism articulates': 1,
+    'carries dimensional constraints': 1,
     'dimensions drive the geometry': 1,
+    'signature dimensions present': 1,
 }
 MUST_PASS = ('executes and builds geometry',)
 MAX_SCORE = sum(ALL_CRITERIA.values())
@@ -65,19 +68,53 @@ def average(values, default=0.0):
 
 
 def load_freecad_command():
-    if not os.environ.get('FREECAD_CMD'):
-        # Only read the setting we need; do not copy unrelated keys/secrets.
-        for folder in (TASK, TASK.parents[1], TASK.parents[2]):
-            env_file = folder / '.env'
-            if env_file.is_file():
-                for line in env_file.read_text(encoding='utf-8-sig').splitlines():
-                    key, separator, value = line.strip().removeprefix('export ').partition('=')
-                    if separator and key.strip() == 'FREECAD_CMD':
-                        os.environ['FREECAD_CMD'] = value.strip().strip('\"\'')
-    command = os.environ.get('FREECAD_CMD') or shutil.which('freecadcmd') or shutil.which('FreeCADCmd.exe')
+    command = os.environ.get('FREECAD_CMD', '').strip().strip('\"\'')
     if not command:
-        raise InfrastructureError('Set FREECAD_CMD to the FreeCAD 1.1 headless executable')
+        # Explicit environment > repository .env > project .env > task .env.
+        # Read only FREECAD_CMD, without importing unrelated settings/secrets.
+        for env_file in ENV_FILES:
+            if not env_file.is_file():
+                continue
+            for line in env_file.read_text(encoding='utf-8-sig').splitlines():
+                key, separator, value = line.strip().removeprefix('export ').partition('=')
+                if not separator or key.strip() != 'FREECAD_CMD':
+                    continue
+                value = value.strip()
+                if value.startswith(('"', "'")):
+                    end = value.find(value[0], 1)
+                    if end < 0:
+                        raise InfrastructureError('Unclosed quote in FREECAD_CMD in %s' % env_file)
+                    value = value[1:end]
+                else:
+                    value = value.split(' #', 1)[0].strip()
+                if value:
+                    command = os.path.expandvars(os.path.expanduser(value))
+                    if not Path(command).is_absolute() and not shutil.which(command):
+                        command = str((env_file.parent / command).resolve())
+                    break
+            if command:
+                break
+    command = command or shutil.which('freecadcmd') or shutil.which('FreeCADCmd.exe')
+    if not command:
+        raise InfrastructureError('Set FREECAD_CMD in the repository .env to the FreeCAD 1.1 headless executable')
+    if not Path(command).is_file() and not shutil.which(command):
+        raise InfrastructureError('FREECAD_CMD does not point to an existing executable: %s' % command)
     return command
+
+
+def keep_diagnostics(out, candidate_path, stdout='', stderr=''):
+    if not DIAGNOSTICS_OUT:
+        return
+    target = Path(DIAGNOSTICS_OUT)/(Path(candidate_path).stem+'-'+uuid.uuid4().hex[:8])
+    target.mkdir(parents=True, exist_ok=True)
+    for name, value in (('stdout.log', stdout), ('stderr.log', stderr)):
+        if isinstance(value, bytes):
+            value = value.decode('utf-8', errors='replace')
+        (target/name).write_text(value or '', encoding='utf-8')
+    for name in ('measure.json', 'progress.json'):
+        file = Path(out)/name
+        if file.exists():
+            shutil.copy2(file, target/name)
 
 
 def run_stage(candidate_path, timeout=TIMEOUT_S):
@@ -87,24 +124,40 @@ def run_stage(candidate_path, timeout=TIMEOUT_S):
         return None, 'No candidate FCStd file was found'
     with tempfile.TemporaryDirectory(prefix='sling-measure-') as out:
         env = dict(os.environ, FC_STAGE_INPUT=str(Path(candidate_path).resolve()), FC_STAGE_OUT=out)
+        # FreeCAD has its own Python/Qt. A scoring virtualenv's modules and
+        # Qt plugins may have a different ABI and must not enter that process.
+        for key in ('PYTHONHOME', 'PYTHONPATH', 'QT_PLUGIN_PATH', 'QT_QPA_PLATFORM_PLUGIN_PATH'):
+            env.pop(key, None)
         try:
             process = subprocess.run([command, '-u', str(Path(out)/'user.cfg'), '-s', str(Path(out)/'system.cfg'), str(HERE/'measure_stage.py')], env=env,
                                      stdin=subprocess.DEVNULL, capture_output=True,
                                      text=True, encoding='utf-8', errors='replace', timeout=max(1,timeout))
-        except subprocess.TimeoutExpired:
-            return None, 'The measurement exceeded its time limit'
+        except subprocess.TimeoutExpired as exc:
+            keep_diagnostics(out, candidate_path, exc.stdout, exc.stderr)
+            progress = Path(out)/'progress.json'
+            stage = progress.read_text(encoding='utf-8') if progress.exists() else 'startup'
+            raise InfrastructureError('FreeCAD exceeded its time limit; last stage: %s' % stage)
         except OSError as exc:
             raise InfrastructureError('Could not start FreeCAD: %s' % exc) from exc
         output = Path(out)/'measure.json'
+        progress = Path(out)/'progress.json'
+        stage = progress.read_text(encoding='utf-8') if progress.exists() else 'before Python script startup'
+        keep_diagnostics(out, candidate_path, process.stdout, process.stderr)
+        if process.returncode:
+            tail = (process.stderr+'\n'+process.stdout)[-2500:]
+            raise InfrastructureError('FreeCAD terminated (exit %s); last stage: %s; %s' %
+                                      (process.returncode, stage, tail))
         if not output.is_file():
             tail = (process.stderr+'\n'+process.stdout)[-2500:]
-            raise InfrastructureError('FreeCAD wrote no measurement (exit %s): %s' % (process.returncode,tail))
+            raise InfrastructureError('FreeCAD wrote no measurement; last stage: %s; %s' % (stage,tail))
         try:
             data = json.loads(output.read_text(encoding='utf-8'),
                               parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
         except (ValueError,OSError) as exc:
             raise InfrastructureError('FreeCAD wrote an invalid measurement: %s' % exc) from exc
         if not data.get('ok'):
+            if data.get('error_kind') == 'infrastructure':
+                raise InfrastructureError(data.get('error', 'FreeCAD API is unavailable'))
             return None, data.get('error','FreeCAD could not read this document')
         if process.returncode:
             raise InfrastructureError('FreeCAD exited unsuccessfully after writing a measurement')
@@ -392,6 +445,91 @@ def working_layout(reference, candidate, pairs):
     return band(projection(candidate,mapped)/abs(expected),-0.1,0.1)
 
 
+# Four distinctive dimensions of the short link, from the PDF drawing.
+# The criteria stay independent: this reads geometry, not parameter labels.
+SIGNATURE_TARGETS = {'length':150.0, 'hole_spacing':120.0, 'width':30.0, 'thickness':10.0}
+SIGNATURE_TOLERANCES = {'length':0.2, 'hole_spacing':0.05, 'width':0.1, 'thickness':0.05}
+
+
+def link_dimension_options(shape):
+    points=np.asarray(shape['points'],dtype=float)
+    options=[]
+    cylinders=[]
+    for cylinder in shape.get('cylinders',[]):
+        if cylinder.get('internal') is not None:
+            if cylinder['internal']:
+                cylinders.append(cylinder)
+            continue
+        # Older measurements lack the normal direction. A full cylindrical
+        # wall is a bore here; rounded link ends cover only half a circle.
+        axis=np.asarray(cylinder['axis'],dtype=float)
+        axis/=max(np.linalg.norm(axis),1e-12)
+        thickness=float(np.ptp(points@axis))
+        fraction=cylinder.get('area',0)/(2*math.pi*max(cylinder['radius']*thickness,1e-12))
+        if fraction > 0.65:
+            cylinders.append(cylinder)
+    for a,b in itertools.combinations(cylinders,2):
+        axis=np.asarray(a['axis'],dtype=float)
+        axis/=max(np.linalg.norm(axis),1e-12)
+        other=np.asarray(b['axis'],dtype=float)
+        other/=max(np.linalg.norm(other),1e-12)
+        if abs(np.dot(axis,other)) < 0.9999:
+            continue
+        delta=np.asarray(b['centre'],dtype=float)-np.asarray(a['centre'],dtype=float)
+        delta-=axis*np.dot(delta,axis)
+        spacing=float(np.linalg.norm(delta))
+        if spacing < 1.0:
+            continue
+        along=delta/spacing
+        across=np.cross(axis,along)
+        options.append({'length':float(np.ptp(points@along)),
+                        'hole_spacing':spacing,
+                        'width':float(np.ptp(points@across)),
+                        'thickness':float(np.ptp(points@axis))})
+    return options
+
+
+def dimension_marks(values):
+    return {name:band(abs(values[name]-target),SIGNATURE_TOLERANCES[name],0.4*target)
+            for name,target in SIGNATURE_TARGETS.items()}
+
+
+def signature_dimensions(reference,candidate,pairs):
+    mapped=dict(pairs)
+    rows=[]
+    for r,part in enumerate(reference['parts']):
+        shape=reference['shapes'][part.get('shape',part['source'])]
+        options=link_dimension_options(shape)
+        # Find the drawing's short-link role by measured geometry, not its name.
+        if not any(all(abs(v[name]-target)<=SIGNATURE_TOLERANCES[name]
+                       for name,target in SIGNATURE_TARGETS.items()) for v in options):
+            continue
+        if r not in mapped:
+            rows.append({'reference_part':part['id'],'candidate_part':None,
+                         'values':None,'scores':dict.fromkeys(SIGNATURE_TARGETS,0.0)})
+            continue
+        actual=candidate['parts'][mapped[r]]
+        actual_shape=candidate['shapes'][actual.get('shape',actual['source'])]
+        options=link_dimension_options(actual_shape)
+        if options:
+            values=max(options,key=lambda v:average(dimension_marks(v).values()))
+            scores=dimension_marks(values)
+        else:
+            # Straight exterior dimensions remain measurable without circular
+            # surfaces. Hole spacing is unverified if no hole axes resolve.
+            _,axes=eigenfacts(actual_shape)
+            extents=sorted(np.ptp(np.asarray(actual_shape['points'])@axes,axis=0))
+            values=dict(length=float(extents[2]),width=float(extents[1]),
+                        thickness=float(extents[0]),hole_spacing=0.0)
+            scores=dimension_marks(values)
+        rows.append({'reference_part':part['id'],'candidate_part':actual['id'],
+                     'values':values,'scores':scores})
+    if not rows:
+        raise InfrastructureError('The reference has no measurable 150/120/30/10 mm short link')
+    score=average(mark for row in rows for mark in row['scores'].values())
+    return score,rows
+
+
 def checks(state):
     data=state['measurement']; reference=state['reference']; error=state['error']
     valid=not error and data.get('build',{}).get('valid',False)
@@ -404,8 +542,7 @@ def checks(state):
     pairs,missing,extra=matching(reference,data)
     extra=unexplained_extras(reference,data,pairs)
     count=len(reference['parts'])
-    out['assembly completeness']=(clamp(1-(missing+extra)/max(count,1)),
-        '%s of %s reference parts matched; %s missing and %s extra parts' % (len(pairs),count,missing,extra))
+    completeness=clamp(1-(missing+extra)/max(count,1))
     scores=[]; cache={}
     for r,c in pairs:
         rp=reference['parts'][r]; cp=data['parts'][c]
@@ -413,17 +550,25 @@ def checks(state):
         if key not in cache:
             cache[key]=geometry_score(reference['shapes'][key[0]],data['shapes'][key[1]])
         scores.append(cache[key])
-    out['geometry and dimensions']=(average(scores),'Compared shape and size in mm for %s installed parts; reflections allowed' % len(pairs))
+    out['geometry matches ground truth']=(clamp((sum(scores)-extra)/max(count,1)),
+        'Compared shape and size in mm: %s of %s parts matched, %s missing, %s extra; reflections allowed' % (len(pairs),count,missing,extra))
     mate,n=joint_coverage(reference,data,pairs)
     out['pantograph joints mated']=(mate,'Checked %s required connections between matched parts' % n)
     movement=motion_score(data)
     hanging=working_layout(reference,data,pairs)
-    out['mechanism articulates within its limits']=(min(movement,hanging),
-        'Checked %s positions: movement %.3f, mechanism below suspension ring %.3f' %
+    out['mechanism articulates']=(movement,
+        'Checked %s positions: movement %.3f; hanging arrangement %.3f is diagnostic only' %
         (len(data['motion']['probes']),movement,hanging))
     coverage,drive,n=parameter_scores(reference,data,pairs)
-    out['dimensional control coverage']=(coverage,'Found upstream editable dimensions on %s modeled part roles' % n)
+    out['carries dimensional constraints']=(coverage,'Found upstream editable dimensions on %s modeled part roles' % n)
     out['dimensions drive the geometry']=(drive,'Changed dimensions on %s part roles and checked the resulting shapes' % n)
+    signature,dimension_rows=signature_dimensions(reference,data,pairs)
+    out['signature dimensions present']=(signature,
+        'Measured short-link length 150, hole spacing 120, width 30 and thickness 10 mm on %s instances' % len(dimension_rows))
+    state['diagnostics']={'assembly_completeness':completeness,
+                          'matched_part_shape_score':average(scores),
+                          'hanging_arrangement':hanging,
+                          'signature_dimensions':dimension_rows}
     return {name:(clamp(score),description) for name,(score,description) in out.items()}
 
 
@@ -436,11 +581,16 @@ def finalize(results):
 
 
 def main(argv=None):
+    global DIAGNOSTICS_OUT
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('candidate',nargs='?',type=Path)
     parser.add_argument('--corpus',action='store_true',help='Measure the reference once, then grade every example')
     parser.add_argument('--measurement-out',type=Path,help='Keep the measured facts for inspection')
+    parser.add_argument('--diagnostics-out',type=Path,help='Keep FreeCAD logs and last measurement stage, including crashes')
     args=parser.parse_args(argv)
+    if not args.corpus and args.candidate is None:
+        parser.error('provide a candidate FCStd path or --corpus')
+    DIAGNOSTICS_OUT = args.diagnostics_out
     try:
         started=time.monotonic()
         reference=load_reference()
@@ -449,14 +599,17 @@ def main(argv=None):
             report=[]
             for path in paths:
                 state=build_state(path,reference)
-                report.append(dict(candidate=str(path),**finalize(checks(state))))
+                result=finalize(checks(state))
+                report.append(dict(candidate=str(path),diagnostics=state.get('diagnostics',{}),**result))
             print(json.dumps(report,indent=2,allow_nan=False))
         else:
             state=build_state(args.candidate,reference, TIMEOUT_S-(time.monotonic()-started))
+            result=finalize(checks(state))
+            result['diagnostics']=state.get('diagnostics',{})
             if args.measurement_out:
                 args.measurement_out.parent.mkdir(parents=True,exist_ok=True)
                 args.measurement_out.write_text(json.dumps(state,indent=2,allow_nan=False),encoding='utf-8')
-            print(json.dumps(finalize(checks(state)),indent=2,allow_nan=False))
+            print(json.dumps(result,indent=2,allow_nan=False))
         return 0
     except InfrastructureError as exc:
         print(json.dumps({'status':'error','error':str(exc),'score':0,'max_score':MAX_SCORE,'passed':False},indent=2))

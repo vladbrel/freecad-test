@@ -1,10 +1,51 @@
 {
-  "freecad_version": "1.1.3",
+  "freecad_version": "1.1.4",
   "platform": "Windows headless",
-  "scoring_unit_tests": 11,
+  "rubric": "original six criteria, continuous scores",
+  "scoring_unit_tests": 21,
+  "unresolved": "joint_limits_swapped has the same enabled slider bounds as the mirrored example; pose is diagnostic only",
   "results": [
     {
       "candidate": "solution",
+      "diagnostics": {
+        "assembly_completeness": 1.0,
+        "matched_part_shape_score": 1.0,
+        "hanging_arrangement": 1.0,
+        "signature_dimensions": [
+          {
+            "reference_part": "Assembly.Bar_10x30x150",
+            "candidate_part": "Assembly.Bar_10x30x150",
+            "values": {
+              "length": 149.94883837280992,
+              "hole_spacing": 120.0,
+              "width": 30.00000000000004,
+              "thickness": 10.000000000000007
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          },
+          {
+            "reference_part": "Assembly.Bar_10x30x151",
+            "candidate_part": "Assembly.Bar_10x30x151",
+            "values": {
+              "length": 149.94883837280992,
+              "hole_spacing": 120.0,
+              "width": 30.00000000000004,
+              "thickness": 10.000000000000007
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          }
+        ]
+      },
       "score": 6.0,
       "max_score": 6,
       "passed": true,
@@ -14,27 +55,22 @@
           "weight": 0,
           "description": "The document rebuilds and contains valid solids"
         },
-        "assembly completeness": {
+        "geometry matches ground truth": {
           "score": 1.0,
           "weight": 1,
-          "description": "43 of 43 reference parts matched; 0 missing and 0 extra parts"
-        },
-        "geometry and dimensions": {
-          "score": 1.0,
-          "weight": 1,
-          "description": "Compared shape and size in mm for 43 installed parts; reflections allowed"
+          "description": "Compared shape and size in mm: 43 of 43 parts matched, 0 missing, 0 extra; reflections allowed"
         },
         "pantograph joints mated": {
           "score": 1.0,
           "weight": 1,
           "description": "Checked 43 required connections between matched parts"
         },
-        "mechanism articulates within its limits": {
+        "mechanism articulates": {
           "score": 1.0,
           "weight": 1,
-          "description": "Checked 4 positions: movement 1.000, mechanism below suspension ring 1.000"
+          "description": "Checked 4 positions: movement 1.000; hanging arrangement 1.000 is diagnostic only"
         },
-        "dimensional control coverage": {
+        "carries dimensional constraints": {
           "score": 1.0,
           "weight": 1,
           "description": "Found upstream editable dimensions on 17 modeled part roles"
@@ -43,11 +79,55 @@
           "score": 1.0,
           "weight": 1,
           "description": "Changed dimensions on 17 part roles and checked the resulting shapes"
+        },
+        "signature dimensions present": {
+          "score": 1.0,
+          "weight": 1,
+          "description": "Measured short-link length 150, hole spacing 120, width 30 and thickness 10 mm on 2 instances"
         }
       }
     },
     {
       "candidate": "adversarial_assembly_mirrored_relative_to_ground_truth",
+      "diagnostics": {
+        "assembly_completeness": 1.0,
+        "matched_part_shape_score": 0.9929225077108197,
+        "hanging_arrangement": 1.0,
+        "signature_dimensions": [
+          {
+            "reference_part": "Assembly.Bar_10x30x150",
+            "candidate_part": "Assembly._1_Pantograph.Bar_10x30x323",
+            "values": {
+              "length": 149.94883837280992,
+              "hole_spacing": 120.00000000000001,
+              "width": 30.000000000000078,
+              "thickness": 10.00000000000001
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          },
+          {
+            "reference_part": "Assembly.Bar_10x30x151",
+            "candidate_part": "Assembly._1_Pantograph.Bar_10x30x324",
+            "values": {
+              "length": 149.94883837280992,
+              "hole_spacing": 120.00000000000001,
+              "width": 30.000000000000078,
+              "thickness": 10.00000000000001
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          }
+        ]
+      },
       "score": 5.9929,
       "max_score": 6,
       "passed": false,
@@ -57,27 +137,22 @@
           "weight": 0,
           "description": "The document rebuilds and contains valid solids"
         },
-        "assembly completeness": {
-          "score": 1.0,
-          "weight": 1,
-          "description": "43 of 43 reference parts matched; 0 missing and 0 extra parts"
-        },
-        "geometry and dimensions": {
+        "geometry matches ground truth": {
           "score": 0.992923,
           "weight": 1,
-          "description": "Compared shape and size in mm for 43 installed parts; reflections allowed"
+          "description": "Compared shape and size in mm: 43 of 43 parts matched, 0 missing, 0 extra; reflections allowed"
         },
         "pantograph joints mated": {
           "score": 1.0,
           "weight": 1,
           "description": "Checked 43 required connections between matched parts"
         },
-        "mechanism articulates within its limits": {
+        "mechanism articulates": {
           "score": 1.0,
           "weight": 1,
-          "description": "Checked 4 positions: movement 1.000, mechanism below suspension ring 1.000"
+          "description": "Checked 4 positions: movement 1.000; hanging arrangement 1.000 is diagnostic only"
         },
-        "dimensional control coverage": {
+        "carries dimensional constraints": {
           "score": 1.0,
           "weight": 1,
           "description": "Found upstream editable dimensions on 17 modeled part roles"
@@ -86,11 +161,55 @@
           "score": 1.0,
           "weight": 1,
           "description": "Changed dimensions on 17 part roles and checked the resulting shapes"
+        },
+        "signature dimensions present": {
+          "score": 1.0,
+          "weight": 1,
+          "description": "Measured short-link length 150, hole spacing 120, width 30 and thickness 10 mm on 2 instances"
         }
       }
     },
     {
       "candidate": "adversarial_dummy_joints_inflate_the_count",
+      "diagnostics": {
+        "assembly_completeness": 1.0,
+        "matched_part_shape_score": 0.99292250771082,
+        "hanging_arrangement": 1.0,
+        "signature_dimensions": [
+          {
+            "reference_part": "Assembly.Bar_10x30x150",
+            "candidate_part": "Assembly._1_Pantograph.Bar_10x30x324",
+            "values": {
+              "length": 149.94883837280997,
+              "hole_spacing": 120.00000000000006,
+              "width": 30.000000000000078,
+              "thickness": 10.000000000000014
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          },
+          {
+            "reference_part": "Assembly.Bar_10x30x151",
+            "candidate_part": "Assembly._1_Pantograph.Bar_10x30x323",
+            "values": {
+              "length": 149.94883837280997,
+              "hole_spacing": 120.00000000000006,
+              "width": 30.000000000000078,
+              "thickness": 10.000000000000014
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          }
+        ]
+      },
       "score": 4.93,
       "max_score": 6,
       "passed": false,
@@ -100,27 +219,22 @@
           "weight": 0,
           "description": "The document rebuilds and contains valid solids"
         },
-        "assembly completeness": {
-          "score": 1.0,
-          "weight": 1,
-          "description": "43 of 43 reference parts matched; 0 missing and 0 extra parts"
-        },
-        "geometry and dimensions": {
+        "geometry matches ground truth": {
           "score": 0.992923,
           "weight": 1,
-          "description": "Compared shape and size in mm for 43 installed parts; reflections allowed"
+          "description": "Compared shape and size in mm: 43 of 43 parts matched, 0 missing, 0 extra; reflections allowed"
         },
         "pantograph joints mated": {
           "score": 0.937039,
           "weight": 1,
           "description": "Checked 43 required connections between matched parts"
         },
-        "mechanism articulates within its limits": {
+        "mechanism articulates": {
           "score": 0.0,
           "weight": 1,
-          "description": "Checked 4 positions: movement 0.000, mechanism below suspension ring 1.000"
+          "description": "Checked 4 positions: movement 0.000; hanging arrangement 1.000 is diagnostic only"
         },
-        "dimensional control coverage": {
+        "carries dimensional constraints": {
           "score": 1.0,
           "weight": 1,
           "description": "Found upstream editable dimensions on 17 modeled part roles"
@@ -129,12 +243,56 @@
           "score": 1.0,
           "weight": 1,
           "description": "Changed dimensions on 17 part roles and checked the resulting shapes"
+        },
+        "signature dimensions present": {
+          "score": 1.0,
+          "weight": 1,
+          "description": "Measured short-link length 150, hole spacing 120, width 30 and thickness 10 mm on 2 instances"
         }
       }
     },
     {
       "candidate": "adversarial_half_finished_missing_features",
-      "score": 5.8509,
+      "diagnostics": {
+        "assembly_completeness": 0.8837209302325582,
+        "matched_part_shape_score": 0.9671684540272455,
+        "hanging_arrangement": 1.0,
+        "signature_dimensions": [
+          {
+            "reference_part": "Assembly.Bar_10x30x150",
+            "candidate_part": "Assembly.Bar_10x30x150",
+            "values": {
+              "length": 149.94883837280986,
+              "hole_spacing": 120.0,
+              "width": 30.000000000000036,
+              "thickness": 10.000000000000007
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          },
+          {
+            "reference_part": "Assembly.Bar_10x30x151",
+            "candidate_part": "Assembly.Bar_10x30x151",
+            "values": {
+              "length": 149.94883837280986,
+              "hole_spacing": 120.0,
+              "width": 30.000000000000036,
+              "thickness": 10.000000000000007
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          }
+        ]
+      },
+      "score": 5.8547,
       "max_score": 6,
       "passed": false,
       "subscores": {
@@ -143,27 +301,22 @@
           "weight": 0,
           "description": "The document rebuilds and contains valid solids"
         },
-        "assembly completeness": {
-          "score": 0.883721,
+        "geometry matches ground truth": {
+          "score": 0.854707,
           "weight": 1,
-          "description": "38 of 43 reference parts matched; 5 missing and 0 extra parts"
-        },
-        "geometry and dimensions": {
-          "score": 0.967168,
-          "weight": 1,
-          "description": "Compared shape and size in mm for 38 installed parts; reflections allowed"
+          "description": "Compared shape and size in mm: 38 of 43 parts matched, 5 missing, 0 extra; reflections allowed"
         },
         "pantograph joints mated": {
           "score": 1.0,
           "weight": 1,
           "description": "Checked 37 required connections between matched parts"
         },
-        "mechanism articulates within its limits": {
+        "mechanism articulates": {
           "score": 1.0,
           "weight": 1,
-          "description": "Checked 4 positions: movement 1.000, mechanism below suspension ring 1.000"
+          "description": "Checked 4 positions: movement 1.000; hanging arrangement 1.000 is diagnostic only"
         },
-        "dimensional control coverage": {
+        "carries dimensional constraints": {
           "score": 1.0,
           "weight": 1,
           "description": "Found upstream editable dimensions on 16 modeled part roles"
@@ -172,12 +325,56 @@
           "score": 1.0,
           "weight": 1,
           "description": "Changed dimensions on 16 part roles and checked the resulting shapes"
+        },
+        "signature dimensions present": {
+          "score": 1.0,
+          "weight": 1,
+          "description": "Measured short-link length 150, hole spacing 120, width 30 and thickness 10 mm on 2 instances"
         }
       }
     },
     {
       "candidate": "adversarial_joint_limits_swapped",
-      "score": 4.9929,
+      "diagnostics": {
+        "assembly_completeness": 1.0,
+        "matched_part_shape_score": 0.9929225077108198,
+        "hanging_arrangement": 0.0,
+        "signature_dimensions": [
+          {
+            "reference_part": "Assembly.Bar_10x30x150",
+            "candidate_part": "Assembly._1_Pantograph.Bar_10x30x324",
+            "values": {
+              "length": 149.94883837280992,
+              "hole_spacing": 120.00000000000006,
+              "width": 30.00000000000003,
+              "thickness": 10.000000000000009
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          },
+          {
+            "reference_part": "Assembly.Bar_10x30x151",
+            "candidate_part": "Assembly._1_Pantograph.Bar_10x30x323",
+            "values": {
+              "length": 149.94883837280992,
+              "hole_spacing": 120.00000000000006,
+              "width": 30.00000000000003,
+              "thickness": 10.000000000000009
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          }
+        ]
+      },
+      "score": 5.9929,
       "max_score": 6,
       "passed": false,
       "subscores": {
@@ -186,27 +383,22 @@
           "weight": 0,
           "description": "The document rebuilds and contains valid solids"
         },
-        "assembly completeness": {
-          "score": 1.0,
-          "weight": 1,
-          "description": "43 of 43 reference parts matched; 0 missing and 0 extra parts"
-        },
-        "geometry and dimensions": {
+        "geometry matches ground truth": {
           "score": 0.992923,
           "weight": 1,
-          "description": "Compared shape and size in mm for 43 installed parts; reflections allowed"
+          "description": "Compared shape and size in mm: 43 of 43 parts matched, 0 missing, 0 extra; reflections allowed"
         },
         "pantograph joints mated": {
           "score": 1.0,
           "weight": 1,
           "description": "Checked 43 required connections between matched parts"
         },
-        "mechanism articulates within its limits": {
-          "score": 0.0,
+        "mechanism articulates": {
+          "score": 1.0,
           "weight": 1,
-          "description": "Checked 4 positions: movement 1.000, mechanism below suspension ring 0.000"
+          "description": "Checked 4 positions: movement 1.000; hanging arrangement 0.000 is diagnostic only"
         },
-        "dimensional control coverage": {
+        "carries dimensional constraints": {
           "score": 1.0,
           "weight": 1,
           "description": "Found upstream editable dimensions on 17 modeled part roles"
@@ -215,11 +407,55 @@
           "score": 1.0,
           "weight": 1,
           "description": "Changed dimensions on 17 part roles and checked the resulting shapes"
+        },
+        "signature dimensions present": {
+          "score": 1.0,
+          "weight": 1,
+          "description": "Measured short-link length 150, hole spacing 120, width 30 and thickness 10 mm on 2 instances"
         }
       }
     },
     {
       "candidate": "adversarial_one_link_missing_joints_bridge_gap",
+      "diagnostics": {
+        "assembly_completeness": 0.9767441860465116,
+        "matched_part_shape_score": 1.0,
+        "hanging_arrangement": 1.0,
+        "signature_dimensions": [
+          {
+            "reference_part": "Assembly.Bar_10x30x150",
+            "candidate_part": "Assembly.Bar_10x30x323",
+            "values": {
+              "length": 149.94883837280986,
+              "hole_spacing": 120.0,
+              "width": 30.00000000000007,
+              "thickness": 10.000000000000009
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          },
+          {
+            "reference_part": "Assembly.Bar_10x30x151",
+            "candidate_part": "Assembly.Bar_10x30x150",
+            "values": {
+              "length": 149.94883837280986,
+              "hole_spacing": 120.0,
+              "width": 30.00000000000007,
+              "thickness": 10.000000000000009
+            },
+            "scores": {
+              "length": 1.0,
+              "hole_spacing": 1.0,
+              "width": 1.0,
+              "thickness": 1.0
+            }
+          }
+        ]
+      },
       "score": 4.9255,
       "max_score": 6,
       "passed": false,
@@ -229,27 +465,22 @@
           "weight": 0,
           "description": "The document rebuilds and contains valid solids"
         },
-        "assembly completeness": {
+        "geometry matches ground truth": {
           "score": 0.976744,
           "weight": 1,
-          "description": "42 of 43 reference parts matched; 1 missing and 0 extra parts"
-        },
-        "geometry and dimensions": {
-          "score": 1.0,
-          "weight": 1,
-          "description": "Compared shape and size in mm for 42 installed parts; reflections allowed"
+          "description": "Compared shape and size in mm: 42 of 43 parts matched, 1 missing, 0 extra; reflections allowed"
         },
         "pantograph joints mated": {
           "score": 0.948718,
           "weight": 1,
           "description": "Checked 39 required connections between matched parts"
         },
-        "mechanism articulates within its limits": {
+        "mechanism articulates": {
           "score": 0.0,
           "weight": 1,
-          "description": "Checked 4 positions: movement 0.000, mechanism below suspension ring 1.000"
+          "description": "Checked 4 positions: movement 0.000; hanging arrangement 1.000 is diagnostic only"
         },
-        "dimensional control coverage": {
+        "carries dimensional constraints": {
           "score": 1.0,
           "weight": 1,
           "description": "Found upstream editable dimensions on 16 modeled part roles"
@@ -258,6 +489,11 @@
           "score": 1.0,
           "weight": 1,
           "description": "Changed dimensions on 16 part roles and checked the resulting shapes"
+        },
+        "signature dimensions present": {
+          "score": 1.0,
+          "weight": 1,
+          "description": "Measured short-link length 150, hole spacing 120, width 30 and thickness 10 mm on 2 instances"
         }
       }
     }

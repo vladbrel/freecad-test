@@ -10,11 +10,36 @@ import os
 import re
 import traceback
 
-import FreeCAD as App
-import Part
+def checkpoint(stage, **details):
+    """Leave a breadcrumb even if native FreeCAD code terminates Python."""
+    folder = os.environ.get('FC_STAGE_OUT')
+    if folder:
+        app = globals().get('App')
+        if app is not None:
+            details.setdefault('version', app.Version())
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, 'progress.json'), 'w', encoding='utf-8') as handle:
+            json.dump(dict(stage=stage, **details), handle, allow_nan=False)
+
+
+checkpoint('imports')
+try:
+    import FreeCAD as App
+    import Part
+except Exception:
+    folder = os.environ.get('FC_STAGE_OUT')
+    if folder:
+        with open(os.path.join(folder, 'measure.json'), 'w', encoding='utf-8') as handle:
+            json.dump({'ok': False, 'error_kind': 'infrastructure',
+                       'error': traceback.format_exc()}, handle)
+    raise
 
 SCHEMA_VERSION = 2
 SAMPLE_COUNT = 384
+
+
+class MeasurementInfrastructureError(RuntimeError):
+    """A missing FreeCAD API is a setup fault, not a bad CAD part."""
 
 
 def vector(v):
@@ -85,7 +110,19 @@ def shape_facts(shape, samples=False):
     for face in shape.Faces:
         surface = face.Surface
         if isinstance(surface, Part.Cylinder):
+            # A bore points into the solid's hole; an outer round cap points
+            # away from its axis. This prevents reading end caps as holes.
+            internal = None
+            try:
+                u0,u1,v0,v1 = face.ParameterRange
+                u,v = (u0+u1)/2.0,(v0+v1)/2.0
+                radial = face.valueAt(u,v)-surface.Center
+                radial -= surface.Axis*radial.dot(surface.Axis)
+                internal = face.normalAt(u,v).dot(radial) < 0
+            except (AttributeError, RuntimeError):
+                pass
             out['cylinders'].append({'radius': float(surface.Radius),
+                                     'internal': internal,
                                      'area': float(face.Area),
                                      'axis': vector(surface.Axis),
                                      'centre': vector(surface.Center)})
@@ -169,7 +206,12 @@ def reference_object(ref):
 
 
 def global_connector(joint, side):
-    import UtilsAssembly
+    try:
+        import UtilsAssembly
+    except ImportError as exc:
+        raise MeasurementInfrastructureError('FreeCAD Assembly module is unavailable: %s' % exc) from exc
+    if not callable(getattr(UtilsAssembly, 'getJcsGlobalPlc', None)):
+        raise MeasurementInfrastructureError('FreeCAD Assembly.getJcsGlobalPlc is unavailable')
     ref = getattr(joint, 'Reference%d' % side)
     return UtilsAssembly.getJcsGlobalPlc(getattr(joint, 'Placement%d' % side), ref)
 
@@ -231,6 +273,8 @@ def joint_facts(joint, context, instances):
                    rotation_error=angle if jt in ('Fixed', 'Slider') else 0.0,
                    coordinate=along if jt in ('Slider', 'Cylindrical') else signed_angle,
                    connector_points=[vector(a.Base), vector(b.Base)])
+    except MeasurementInfrastructureError:
+        raise
     except Exception as exc:
         out['error'] = '%s: %s' % (type(exc).__name__, exc)
     return out
@@ -340,6 +384,7 @@ def parameter_facts(doc, sources):
     result = {}
     placements = {o.Name:App.Placement(o.Placement) for o in doc.Objects if hasattr(o,'Placement')}
     for name, source in sources.items():
+        checkpoint('parameter checks', source=name)
         controls = dimension_controls(source)
         expressions = []
         for obj in dependencies(source):
@@ -439,6 +484,7 @@ def motion_facts(doc, instances, contexts):
         if right-left > 0.1:
             deltas = tuple(left+(right-left)*fraction-start for fraction in (0.1,0.35,0.65,0.9))
     for delta in deltas:
+        checkpoint('motion check', target=start+delta)
         row={'target':start+delta,'input_fraction':abs(delta)/max(abs(start),100.0),'ok':False,'gap':0.0,'axis_error':0.0,
              'relative_motion':0.0,'limit_score':0.0,'solver_status':None,'error':None}
         doc.openTransaction('Temporary motion check')
@@ -500,7 +546,9 @@ def motion_facts(doc, instances, contexts):
 
 def measure(doc):
     doc.UndoMode = 1
+    checkpoint('recompute', version=App.Version())
     doc.recompute(None, True)
+    checkpoint('collect installed parts')
     instances, contexts = collect(doc)
     sources = {i['source'].Name: i['source'] for i in instances}
     relevant = {o.Name for s in sources.values() for o in dependencies(s)}
@@ -510,6 +558,7 @@ def measure(doc):
     validity = {}
     parts = []
     for instance in instances:
+        checkpoint('measure shape', part=instance['id'])
         obj=instance['object']
         shape=instance['shape']
         # Measure the installed shape, including App::Link scale. Its source
@@ -543,17 +592,30 @@ def run():
     recompute_solve = preferences.GetBool('SolveOnRecompute', True)
     preferences.SetBool('SolveOnRecompute', False)
     try:
+        checkpoint('open document', version=App.Version())
         doc = App.openDocument(os.environ['FC_STAGE_INPUT'])
         result = dict(measure(doc), ok=True)
-    except Exception:
-        result = {'ok': False, 'error': traceback.format_exc(limit=8)}
+        json.dumps(result, allow_nan=False)
+    except Exception as exc:
+        result = {'ok': False, 'error': traceback.format_exc(limit=8),
+                  'error_kind': 'infrastructure' if isinstance(exc, MeasurementInfrastructureError) else 'candidate'}
     finally:
-        preferences.SetBool('SolveInJointCreation', automatic)
-        preferences.SetBool('SolveOnRecompute', recompute_solve)
-        if doc is not None:
-            App.closeDocument(doc.Name)
-    with open(os.path.join(out_dir, 'measure.json'), 'w', encoding='utf-8') as handle:
-        json.dump(result, handle, allow_nan=False)
+        # Write BEFORE closing: a native crash in closeDocument cannot be
+        # caught by Python, but the parent can still see the completed facts.
+        with open(os.path.join(out_dir, 'measure.json'), 'w', encoding='utf-8') as handle:
+            json.dump(result, handle, allow_nan=False)
+        checkpoint('close document', version=App.Version())
+        try:
+            preferences.SetBool('SolveInJointCreation', automatic)
+            preferences.SetBool('SolveOnRecompute', recompute_solve)
+            if doc is not None:
+                App.closeDocument(doc.Name)
+        except Exception:
+            result = {'ok': False, 'error_kind': 'infrastructure',
+                      'error': 'Could not close/restore FreeCAD: '+traceback.format_exc(limit=8)}
+            with open(os.path.join(out_dir, 'measure.json'), 'w', encoding='utf-8') as handle:
+                json.dump(result, handle, allow_nan=False)
+    checkpoint('finished', version=App.Version())
 
 
 if os.environ.get('FC_STAGE_INPUT') and os.environ.get('FC_STAGE_OUT'):

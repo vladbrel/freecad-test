@@ -19,7 +19,7 @@ max_score = 6
 output_modality = "cad"
 accepted_output_formats = ["fcstd", "freecad-py", "fcmacro"]
 reference = ["solution/solution.FCStd"]
-notes = "Deterministic FreeCAD 1.1 headless grader; no LLM. Six equally weighted checks: completeness, geometry/dimensions, mates, articulation/limits, dimensional-control coverage, and actual geometry response to parameter edits. A valid global mirror is accepted. The frozen reference is tests/task/reference/solution.FCStd. Two ISO 8752 6x16 pins from the drawing are allowed even though the reference omits them. See tests/task/harness/NOTES.md for measurements, tolerances, validation and supported modeling scope."
+notes = "Deterministic FreeCAD 1.1 headless grader; no LLM. Original six equally weighted criteria restored: geometry (including completeness), mates, articulation, dimensional constraints, geometry response to dimension edits, and signature dimensions. Signature dimensions are the PDF short-link length 150 mm, hole spacing 120 mm, width 30 mm and thickness 10 mm. Global mirrors are accepted. Hanging arrangement is diagnostic only. The frozen reference is tests/task/reference/solution.FCStd. Two drawing ISO 8752 6x16 pins are allowed additions. See tests/task/harness/NOTES.md and DECISIONS.md; the joint_limits_swapped fixture needs clarification about required working pose."
 
 [metadata.harness]
 entrypoint = "harness/harness.py"

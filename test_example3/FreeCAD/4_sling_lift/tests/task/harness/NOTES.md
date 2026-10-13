@@ -1,139 +1,175 @@
-# How this grader works
+# FreeCAD Sling Lift grader
 
-The grader runs without an LLM or a FreeCAD window. `measure_stage.py` opens
-one document in FreeCAD, collects facts and writes JSON. `harness.py` runs
-under ordinary Python and turns those facts into six scores between 0 and 1.
-The original document is never saved. Object names connect records within a
-measurement; they are not a list of accepted answers.
+The grader uses the original six criterion names and integer weights (one
+point each). Each criterion returns a continuous score from 0 to 1, as the
+assignment requests. `measure_stage.py` reads CAD facts in a separate FreeCAD
+process; `harness.py` scores those facts under ordinary Python. No LLM is used.
 
-## Run
+The original assignment is preserved in `test_example3/README.assignment.md`.
+`DECISIONS.md` explains the business decisions and contains an unsent draft
+question to the employer about ambiguous examples.
 
-From `test_example3`, use Python 3.11 or later:
+## Setup
+
+Use Python 3.11 or later. From `test_example3`:
 
 ```sh
 pip install -r env_requirements.txt
 python tools/fetch.py
 python FreeCAD/4_sling_lift/tests/task/harness/harness.py FreeCAD/4_sling_lift/solution/solution.FCStd
-python FreeCAD/4_sling_lift/tests/task/harness/harness.py --corpus
+python FreeCAD/4_sling_lift/tests/task/harness/harness.py --corpus --diagnostics-out freecad-logs
 python -m unittest discover -s FreeCAD/4_sling_lift/tests/task/harness -p test_scoring.py
 ```
 
-Set `FREECAD_CMD` to the FreeCAD 1.1 `freecadcmd` executable, either in the
-environment or in `.env`. On PowerShell, for example:
+Copy the repository's `.env.example` to `.env` and set `FREECAD_CMD` to your
+existing FreeCAD 1.1 headless executable. The harness finds `.env` from its
+own location, so changing the current directory does not change that search.
+Priority: an explicit environment variable, repository `.env`, project `.env`,
+task `.env`, then PATH. If an old environment variable points to the wrong
+file, update or unset it before using `.env`. Quotes, spaces, comments, UTF-8
+BOM and paths relative to the `.env` file are supported.
 
-```powershell
-$env:FREECAD_CMD = 'C:\Program Files\FreeCAD 1.1\bin\freecadcmd.exe'
-```
+`--measurement-out facts.json` keeps facts and diagnostics for one submission.
+`--diagnostics-out freecad-logs` also retains stdout, stderr, the last recorded
+stage and the measurement file when available. This includes native crashes
+and timeouts. A missing executable, missing reference, unavailable API or
+native crash is an infrastructure error (exit 2), not a measured CAD defect.
+The single-candidate command has a 600-second measurement budget. Corpus mode
+measures the reference once and gives each candidate its own budget.
 
-Use `--measurement-out facts.json` to retain the measured facts for a single
-candidate. The frozen reference is `tests/task/reference/solution.FCStd`,
-loaded separately from the submission. `tools/fetch.py` downloads it too.
-A missing executable/reference is a setup error (exit 2), not a CAD defect.
-The subprocess has a time limit of 600 seconds. Each run uses separate
-FreeCAD settings so it does not change the user's settings. The Docker
-recipe has been updated but was not built in this Windows environment.
+## Original six criteria
 
-## Six points
-
-| Check | What earns the point |
+| Criterion | What is measured |
 |---|---|
-| Assembly completeness | Required installed parts exist, without unexplained extras. |
-| Geometry and dimensions | Their shape and actual size in millimetres match the reference. |
-| Pantograph joints mated | Required connections resolve to real installed parts and meet physically. |
-| Mechanism articulates within its limits | FreeCAD solves nearby input positions; links rotate, joints stay together, enabled limits hold and the mechanism hangs below its suspension ring. |
-| Dimensional control coverage | Modeled part roles have editable upstream dimensions. |
-| Dimensions drive the geometry | Changing those dimensions changes a valid resulting solid. |
+| geometry matches ground truth | Shape and real size of installed parts, including missing parts and unexplained extras. |
+| pantograph joints mated | Required connections resolve to actual installed parts and meet physically. |
+| mechanism articulates | The native solver reaches nearby input positions; links rotate, connections hold and enabled limits are respected. |
+| carries dimensional constraints | Modeled part roles have editable upstream driving dimensions. |
+| dimensions drive the geometry | A small dimension edit changes a valid resulting solid. |
+| signature dimensions present | Short-link length 150 mm, hole spacing 120 mm, width 30 mm and thickness 10 mm from the drawing. |
 
-A document that cannot rebuild valid solids receives zero through a separate
-build gate. This gate has no point of its own. Each other check weighs one.
-A missing part is charged to completeness; its absent connections and absent
-parameters are excluded from the remaining checks. Existing malformed parts
-can still lose geometry points. A broken connection may also stop movement:
-these are two observable failures, not a penalty based on its filename.
+A separate build gate, with weight zero, gives zero overall when the document
+cannot rebuild valid solids. Weights stay integer; partial fulfillment and
+therefore the total score can be fractional. Do not round the total to an
+integer: that would hide defects.
 
-## Measurements and tolerances
+Completeness, average shape quality, hanging arrangement and individual key
+measurements are returned in `diagnostics`. Hanging arrangement does not
+change the score. Missing connections/parameters with a missing endpoint are
+excluded from those checks; geometry already accounts for missing parts.
+Missing a required short link also means its signature dimensions are absent.
+A connection failure can prevent articulation: both observable criteria may
+lose credit for one underlying fault.
 
-Only installed instances are counted. Unused source parts and copied assembly
-definitions are excluded. Links are measured at their installed scale. Part
-roles are matched by volume, surface area and inertia, using a one-to-one
-assignment. Size is removed only when finding corresponding roles; grading
-keeps the real dimensions. Rigid rotation, translation and reflection are
-allowed. No filename or document hash gives a submission full credit.
+## Geometry
 
-Geometry combines relative volume/area errors, principal inertia-derived
-lengths, cylinder radii and a deterministic surface sample (384 points,
-0.15 mm tessellation). Length/radius differences up to 0.3% and volume/area
-up to 0.8% receive full credit. Larger errors lose credit continuously.
-The surface comparison includes sampling-spacing tolerance, so it is a
-coarse shape check, not proof that every small feature is correct. Two
-ISO 8752 6x16 spring pins shown in the drawing are permitted additions:
-the supplied reference omits them. Recognition uses geometric measurements.
+Only installed instances are counted; unused source definitions are omitted.
+Links are measured at their actual installed scale. Parts are matched by
+volume, area and inertia with a one-to-one assignment. Matching removes size
+only to find corresponding roles; grading retains millimetres. Rigid motion
+and reflection are accepted. Object names connect records, not answers.
 
-Joint references are resolved through FreeCAD's native Assembly API. Joint
-count alone earns nothing. Gap tolerance is 0.05 mm, fading to zero at 5 mm;
-axis/frame tolerance is 0.2 degrees, fading to zero at 20 degrees. Opposite
-axis directions are valid. Equivalent fixed connection chains are accepted.
+Shape quality combines volume/area, principal inertia-derived lengths,
+cylinder radii and 384 deterministic surface samples (0.15 mm tessellation).
+Length/radius errors up to 0.3% and volume/area up to 0.8% receive full credit;
+larger errors lose credit continuously. Sampling-spacing tolerance makes the
+surface check coarse: it is not proof of every small cut. Geometry averages
+matched shape scores over the reference's installed-part count, gives zero
+for missing roles and subtracts unexplained extras. Two ISO 8752 6x16 pins
+shown in the PDF are allowed additions; the reference omits them.
 
-For movement, the first native slider supplies the input. It is temporarily
-locked at four nearby positions; enabled slider bounds restrict the trials.
-The native solver moves the remaining parts, in small steps. Measurements
-then check physical gaps, rotation and enabled bounds. Angular bounds are
-compared modulo 360 degrees. The hanging-side check uses the ring-to-shackle
-direction, so a global rotation or mirror has no effect. It detects the
-supplied swapped-limits example's wrong folded branch, without assuming a
-particular world axis. Joint definitions and placements are restored.
+## Signature dimensions
 
-Parameter checks follow the source part's dependencies, looking for driving
-sketch dimensions, feature dimensions and numeric spreadsheet inputs used by
-expressions. Up to three substantial dimensions per unique source are changed
-by 2%, then restored. Volume, area and invariant mass moments detect whether
-the solid changes. Imported reference hardware is excluded from the demand
-for editable dimensions. A response of 0.01% or more earns full response
-credit; smaller responses earn a fraction. Inactive secondary lengths and
-inactive chamfer angles are excluded.
+The short-link role is identified in the reference by physical dimensions,
+not a body name or constraint label. Both installed instances are checked.
+Parallel bore axes supply the spacing and orientation. Surface samples give
+length, width and thickness in that frame. Face normals distinguish bore
+walls from outer rounded caps, so deleted holes cannot earn spacing credit
+from the surviving round ends. Older measurements without normals use a
+full-cylindrical-wall check; the current producer includes normals.
 
-## Scope and limits
+Full-credit tolerances in mm: length 0.2, spacing 0.05, width 0.1, thickness
+0.05. Errors then fade to zero at 40% of the target dimension. The four marks
+are averaged. These are four selected distinctive dimensions, not every
+annotation in the PDF. Reading bore axes supports native cylindrical BRep
+surfaces. If they are absent, exterior dimensions use principal directions
+and hole spacing is unverified. A NURBS/mesh-only bore representation needs
+an additional geometric reader before equivalent submissions can be graded
+fairly; this limitation is not a claim that those representations are wrong.
 
-The movement test supports FreeCAD 1.1's built-in Assembly, including nested
-Assembly links. Other assembly workbenches need an explicit adapter. This is
-a local movement test, not a proof of the entire reachable workspace. It does
-not certify load capacity, collisions, material strength or the 30 kg rating.
-The hanging-side test checks the submitted pose; it does not prohibit every
-possible unusual pose of an otherwise correct mechanism.
+## Joints, motion and parameters
 
-Parameter coverage is measured by part role, not by every dimension in the
-PDF. Three edits do not prove that every key dimension is independent, nor
-that the complete assembly remates correctly after large size changes.
-Equivalent bodies and links are supported; merging several physical parts
-into one solid changes the part matching and needs a richer part separator.
-Process isolation handles crashes, but is not a security sandbox for hostile
-FreeCAD documents.
+Native Assembly references are resolved through FreeCAD's Assembly API.
+Joint count alone earns nothing. Gap tolerance is 0.05 mm, fading to zero at
+5 mm; axis/frame tolerance is 0.2 degrees, fading at 20 degrees. Opposite
+axis directions and equivalent fixed connection chains are accepted.
 
-## Validation
+The first native slider is temporarily fixed at four nearby input positions,
+inside enabled slider bounds. The native solver moves the other parts in
+small steps. Joint definitions are restored before checking physical gaps,
+relative rotation and enabled bounds. Angles are compared modulo 360 degrees.
+All placements and settings are restored; the CAD document is never saved.
 
-Native integration runs use FreeCAD 1.1.3 on Windows, headless. The score
-report is in `validation_scores.json`. Unit regressions cover exact 6/6,
-reflection, real scale changes, missing parts, dummy joints, decorative
-parameters, failed builds, continuous gap penalties and hanging orientation.
+Parameter checks follow the source part's dependencies: driving sketch
+constraints, feature dimensions and numeric spreadsheet inputs referenced
+by expressions. Up to three substantial dimensions per source are tried
+at +2%; testing stops at a successful meaningful response. Volume, area and
+invariant mass moments detect change. Imported reference hardware is excluded
+from the demand to rebuild parametric threads. A response of 0.01% earns
+full response credit; smaller changes earn a fraction. Inactive second pad
+lengths and inactive chamfer angles are excluded.
 
-The model called `assembly_mirrored_relative_to_ground_truth` is not a pure
-reflection: its two sleeve parts have volume 27408.9913 mm³ instead of
-24551.5165 mm³ after a forced rebuild. Only this real geometry difference
-reduces its score. The mirror itself is valid. The supplied example labels
-are descriptions to investigate, not truth that overrides measurements.
+This proves a selected dimension can change each modeled role, not that
+every key dimension is independently editable or that large size changes
+remate the entire assembly. The signature criterion reads resulting geometry;
+it is distinct from that limited parameter-response test.
 
+## Compatibility and scope
+
+Tested natively on official FreeCAD 1.1.4, Windows headless, including the
+full reference command and measurements of all five examples. The earlier
+measurement code also ran successfully on that release: incompatibility of
+UtilsAssembly with 1.1.4 is not established. The reported native termination
+was not reproduced. Python exceptions are caught; native termination cannot
+be caught by Python inside the dying process. The parent detects it, reports
+the last recorded stage and retains diagnostics when requested.
+
+FreeCAD uses its own Python/Qt; PYTHONHOME, PYTHONPATH and Qt plugin paths from
+the scoring environment are removed for the subprocess. Results are written
+before closing the CAD document, and an unsuccessful process exit is always
+an error even if a measurement file exists. This is process isolation, not
+a security sandbox for hostile documents.
+
+Movement supports FreeCAD 1.1 built-in Assembly and its nested links. Other
+assembly workbenches need an adapter. Local trials do not prove the entire
+workspace, collisions, load capacity, material strength or the 30 kg rating.
+Merging multiple physical parts into one solid also needs a richer separator.
+The Docker recipe remains pinned to 1.1.3 and was not built in this Windows
+validation; local 1.1.4 results must not be presented as Docker validation.
+
+## Current validation (2026-10-13)
+
+The JSON report is `validation_scores.json`. There are 21 scoring/setup
+regressions, including the original criterion names, integer weights, mirrors,
+actual size changes, partial penalties, fake joints, decorative parameters,
+.env parsing, crashes/timeouts, signature spacing and outer-cap rejection.
 
 | Model | Score / 6 | Reduced criteria |
 |---|---:|---|
 | solution | 6.0000 | None |
 | assembly_mirrored_relative_to_ground_truth | 5.9929 | Geometry only; reflection accepted. |
-| dummy_joints_inflate_the_count | 4.9300 | Geometry, physical joints, movement. |
-| half_finished_missing_features | 5.8509 | Completeness and geometry only. |
-| joint_limits_swapped | 4.9929 | Geometry and working hanging arrangement. |
-| one_link_missing_joints_bridge_gap | 4.9255 | Completeness, physical joints, movement. |
+| dummy_joints_inflate_the_count | 4.9300 | Geometry, joints, movement. |
+| half_finished_missing_features | 5.8547 | Geometry, including missing parts. |
+| joint_limits_swapped | 5.9929 | Geometry only; limits defect not established. |
+| one_link_missing_joints_bridge_gap | 4.9255 | Geometry, joints, movement. |
 
-Several supplied examples share the changed sleeve geometry, so their score
-can include that small geometry loss as well as the defect in the filename.
-The single-candidate command was also run end to end: the supplied solution
-returned exactly 6/6 with `passed: true`. Checksums of all seven CAD files
-(including the separate frozen reference) remained equal to their manifests.
+The mirror and several other examples share sleeve cuts different from the
+reference. The mirrored sleeve volume is 27408.9913 mm³ rather than 24551.5165
+mm³ after forced rebuild; the reflection itself incurs no penalty.
+
+The supplied joint_limits_swapped and mirrored examples have the same enabled
+slider range (-180 to -130 mm), both in the saved Document.xml and in native
+measurements. Both move within it. Their hanging/folding arrangement differs.
+Whether that working arrangement is mandatory needs clarification from the
+employer. The grader reports it without inventing a limits penalty. See the
+unsent clarification draft in DECISIONS.md. This corpus issue remains open.

@@ -9,3 +9,4 @@ venv/
 
 # Temporary local CAD diagnostics
 .audit/
+.env

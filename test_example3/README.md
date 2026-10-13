@@ -30,7 +30,9 @@ On Linux, for example:
 export FREECAD_CMD=/usr/bin/freecadcmd
 ```
 
-You can also put this setting in `.env`. Then run:
+Copy `../.env.example` to `../.env` and set the executable path once.
+The harness reads it independently of the current directory. An explicitly
+set environment variable takes priority. Then run:
 
 ```sh
 python FreeCAD/4_sling_lift/tests/task/harness/harness.py FreeCAD/4_sling_lift/solution/solution.FCStd
@@ -45,15 +47,21 @@ Use `--measurement-out facts.json` to keep the facts behind a single result.
 
 Each criterion contributes one point:
 
-1. Assembly completeness.
-2. Geometry and actual dimensions.
-3. Pantograph joints physically mated.
-4. Movement within enabled limits and the intended hanging arrangement.
-5. Editable dimensions on modeled part roles.
-6. Those dimensions actually change the resulting solids.
+1. Geometry matches ground truth, including missing/unexplained extra parts.
+2. Pantograph joints physically mated.
+3. Mechanism articulates within enabled limits.
+4. Carries dimensional constraints.
+5. Dimensions drive the geometry.
+6. Signature dimensions present: short-link length 150, hole spacing 120,
+   width 30 and thickness 10 mm.
 
 The separate build gate gives zero if the document cannot rebuild valid
 solids. Geometry tolerances and connection errors produce gradual penalties.
+The original assignment is preserved in [README.assignment.md](README.assignment.md).
+The original six criterion names and integer weights are restored. Additional
+checks are reported under `diagnostics`; continuous scores remain as required
+by the assignment. The scoring decision and unresolved limits/pose issue are in
+[DECISIONS.md](FreeCAD/4_sling_lift/tests/task/harness/DECISIONS.md).
 The detailed choices, limitations and actual corpus results are documented
 in [NOTES.md](FreeCAD/4_sling_lift/tests/task/harness/NOTES.md).
 
@@ -97,3 +105,16 @@ The base image supplies FreeCAD 1.1.3 and the Python dependencies. Harbor
 mounts the tests; `tests/test.sh` grades `/app/solution.FCStd` and writes
 `/logs/verifier/reward.json`. The Docker recipe was not built during the
 Windows validation run.
+
+
+For a startup or native crash, keep the logs:
+
+```sh
+python FreeCAD/4_sling_lift/tests/task/harness/harness.py --corpus --diagnostics-out freecad-logs
+```
+
+The error includes the last recorded stage and FreeCAD version when available.
+Python exceptions produce JSON inside the measurement process; native crashes
+are detected by the parent process. A native crash cannot be caught by Python
+`try/except`. FreeCAD uses its own Python and Qt, isolated from those settings
+in the scoring environment.
