@@ -77,8 +77,8 @@ uses the installation directory as cwd and puts its DLL directory first.
 The bundled-Python fallback is Windows-only and is attempted only if the CLI
 fails BEFORE any progress/measurement is written. A failure while measuring
 CAD is never rerun behind the reviewer's back. Linux/macOS retain the normal
-headless CLI path. Native Linux/macOS execution was not performed in this
-Windows environment; their launch selection is covered by regression tests.
+headless CLI path. Native Linux/macOS execution is not validated; their
+launch selection is covered by regression tests.
 
 If necessary, explicitly bypass a broken Windows console launcher:
 
@@ -126,23 +126,3 @@ For an offline reviewer, use `python package_submission.py --include-cad` and
 send a download link instead of a large email attachment. The archive still
 excludes the FreeCAD installation and scoring environment.
 
-Send to `careers@storygold.com`, subject **CAD Evaluation Engineer**, as the
-recruitment message requests. Attach the small ZIP, or provide a repository /
-archive link the recipient can access. Suggested text:
-
-> Hello StoryGold Team,
->
-> Please find my FreeCAD CAD Evaluation Engineer submission attached.
-> SUBMISSION.md contains one-command reproduction instructions. The grader
-> uses the original six criteria, continuous deterministic scores and no LLM.
-> The supplied solution scores 6/6 on FreeCAD 1.1.4 headless. Startup supports
-> the Windows console launcher and the same bundle's Python as a fallback.
-> The validation report and an explicitly documented corpus ambiguity are
-> included. Running `python run_evaluation.py` produces a readable score table
-> and the detailed JSON report.
->
-> Kind regards,
-> [Your name]
-
-No email has been sent by the assistant. Review the code, results and the open
-question before submitting; the draft is provided for you to adapt.

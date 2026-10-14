@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare a small reproducible submission; never include local .env/logs."""
 import argparse
+import json
 from pathlib import Path
 import zipfile
 
@@ -25,6 +26,16 @@ for file in files:
 args.output.parent.mkdir(parents=True,exist_ok=True)
 with zipfile.ZipFile(args.output,'w',compression=zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
     for file in sorted(set(files)):
-        archive.write(file,file.relative_to(ROOT).as_posix())
+        relative = file.relative_to(ROOT).as_posix()
+        if '.git' in file.relative_to(ROOT).parts:
+            raise SystemExit('Git metadata must not be included')
+        if file.name == 'validation_scores.json':
+            # Keep measured results, but omit the validation machine's paths.
+            report = json.loads(file.read_text(encoding='utf-8-sig'))
+            for result in report.get('results', []):
+                result.get('diagnostics', {}).get('launcher', {}).pop('executable', None)
+            archive.writestr(relative, json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+        else:
+            archive.write(file, relative)
 print(args.output.resolve())
 print('Files:',len(set(files)),'Size:',args.output.stat().st_size,'bytes')

@@ -145,8 +145,8 @@ Movement supports FreeCAD 1.1 built-in Assembly and its nested links. Other
 assembly workbenches need an adapter. Local trials do not prove the entire
 workspace, collisions, load capacity, material strength or the 30 kg rating.
 Merging multiple physical parts into one solid also needs a richer separator.
-The Docker recipe remains pinned to 1.1.3 and was not built in this Windows
-validation; local 1.1.4 results must not be presented as Docker validation.
+The Docker recipe remains pinned to 1.1.3 and is not validated by the native
+1.1.4 results.
 
 ## Current validation (2026-10-13)
 
@@ -192,4 +192,4 @@ assets. `--report-out` saves UTF-8 JSON. Root `run_evaluation.py` handles setup
 and writes a readable table. See SUBMISSION.md for reviewer instructions.
 CLI and embedded Python both measured the complete reference at 6/6. Native
 Windows tests covered the Unicode startup failure and automatic recovery;
-Linux/macOS selection is unit-tested, not natively executed here.
+Linux/macOS selection is unit-tested; native execution is not validated.
